@@ -5,6 +5,8 @@ class ClaudeChatClient {
         this.currentEventSource = null;
         this.artifacts = [];
         this.slideApiKey = null;
+        this.processedToolIds = new Set(); // Track processed tool use blocks
+        this.pendingAfterToolContent = null; // Track content to show after tool blocks
         
         this.initializeElements();
         this.setupEventListeners();
@@ -182,6 +184,10 @@ class ClaudeChatClient {
         const message = this.messageInput.value.trim();
         if (!message || this.currentEventSource) return;
         
+        // Clear processed tool IDs for new conversation
+        this.processedToolIds.clear();
+        this.pendingAfterToolContent = null;
+        
         // Add user message to chat
         this.addMessage('user', message);
         
@@ -336,6 +342,12 @@ class ClaudeChatClient {
                                         }
                                         
                                         fullContent += data.content;
+                                        
+                                        // Check if this chunk contains tool use and handle it immediately
+                                        const processedResult = this.processStreamingChunk(fullContent);
+                                        fullContent = processedResult.cleanContent;
+                                        
+                                        // Update the chat message with clean content
                                         const contentDiv = assistantMessage.querySelector('.message-content');
                                         contentDiv.innerHTML = this.renderMarkdown(fullContent);
                                         this.scrollToBottom();
@@ -394,15 +406,35 @@ class ClaudeChatClient {
                                 }
                             }
                             else if (line.trim() && !line.startsWith('data: ')) {
-                                // Regular streaming text (not JSON data)
-                                if (!assistantMessage) {
-                                    assistantMessage = this.addMessage('assistant', '');
+                                // Check for tool use markers within the text
+                                if (line.includes('TOOL_USE_START') || line.includes('TOOL_USE_END') || 
+                                    line.includes('TOOL_ERROR_START') || line.includes('TOOL_ERROR_END')) {
+                                    
+                                    // Process tool use data and filter out markers from chat content
+                                    const filteredLine = this.processToolUseInText(line);
+                                    
+                                    // Only add filtered content if there's meaningful text left
+                                    if (filteredLine && filteredLine.trim()) {
+                                        if (!assistantMessage) {
+                                            assistantMessage = this.addMessage('assistant', '');
+                                        }
+                                        
+                                        fullContent += filteredLine + '\n';
+                                        const contentDiv = assistantMessage.querySelector('.message-content');
+                                        contentDiv.innerHTML = this.renderMarkdown(fullContent);
+                                        this.scrollToBottom();
+                                    }
+                                } else {
+                                    // Regular streaming text (not JSON data)
+                                    if (!assistantMessage) {
+                                        assistantMessage = this.addMessage('assistant', '');
+                                    }
+                                    
+                                    fullContent += line + '\n';
+                                    const contentDiv = assistantMessage.querySelector('.message-content');
+                                    contentDiv.innerHTML = this.renderMarkdown(fullContent);
+                                    this.scrollToBottom();
                                 }
-                                
-                                fullContent += line + '\n';
-                                const contentDiv = assistantMessage.querySelector('.message-content');
-                                contentDiv.innerHTML = this.renderMarkdown(fullContent);
-                                this.scrollToBottom();
                             }
                         }
                         
@@ -859,64 +891,107 @@ class ClaudeChatClient {
         }
     }
     
-    // Tool Use Display Methods
+    // Tool Use Display Methods - Hidden from user
     addToolUseBlock(toolData) {
-        const toolBlock = document.createElement('div');
-        toolBlock.className = 'tool-use-block';
-        toolBlock.setAttribute('data-tool-id', toolData.tool_id);
-        
-        const toolId = 'tool-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-        
-        toolBlock.innerHTML = `
-            <div class="tool-use-header" onclick="window.claudeChat.toggleToolUse('${toolId}')">
-                <span class="tool-icon">🔧</span>
-                <span class="tool-name">${toolData.tool_name}</span>
-                <span class="expand-icon">▶</span>
-            </div>
-            <div class="tool-use-content">
-                <div class="tool-input">
-                    <strong>Input:</strong>
-                    <pre class="tool-result">${JSON.stringify(toolData.tool_input, null, 2)}</pre>
-                </div>
-                <div class="tool-output">
-                    <strong>Result:</strong>
-                    <pre class="tool-result">${JSON.stringify(toolData.tool_result, null, 2)}</pre>
-                </div>
-            </div>
-        `;
-        
-        toolBlock.id = toolId;
-        this.chatMessages.appendChild(toolBlock);
-        this.scrollToBottom();
+        // Tool use blocks are now hidden from the user interface
+        // Just track that we've processed this tool ID
+        if (toolData && toolData.tool_id) {
+            this.processedToolIds.add(toolData.tool_id);
+        }
     }
     
     addToolErrorBlock(errorData) {
-        const errorBlock = document.createElement('div');
-        errorBlock.className = 'tool-error';
-        errorBlock.setAttribute('data-tool-id', errorData.tool_id);
-        
-        errorBlock.innerHTML = `
-            <span class="error-icon">❌</span>
-            <strong>Tool Error: ${errorData.tool_name}</strong>
-            <br>
-            <span>${errorData.error}</span>
-        `;
-        
-        this.chatMessages.appendChild(errorBlock);
-        this.scrollToBottom();
+        // Tool error blocks are now hidden from the user interface
+        // Errors will be handled silently or shown in the main chat if needed
+        console.warn('Tool error occurred:', errorData);
     }
     
-    toggleToolUse(toolId) {
-        const toolBlock = document.getElementById(toolId);
-        if (toolBlock) {
-            const isExpanded = toolBlock.classList.contains('expanded');
-            if (isExpanded) {
-                toolBlock.classList.remove('expanded');
-            } else {
-                toolBlock.classList.add('expanded');
+    // toggleToolUse method removed - tool blocks are now hidden
+    
+    processToolUseInText(text) {
+        // Handle tool use markers embedded in text lines and return filtered text
+        // Keep the "🔧 Using tool:" messages but filter out detailed responses
+        let filteredText = text;
+        
+        try {
+            // Look for TOOL_USE_START...TOOL_USE_END pattern
+            const toolUseMatch = text.match(/TOOL_USE_START(.*?)TOOL_USE_END/);
+            if (toolUseMatch) {
+                const toolDataString = toolUseMatch[1];
+                try {
+                    const toolData = JSON.parse(toolDataString);
+                    this.addToolUseBlock(toolData);
+                    
+                    // Remove only the tool use markers and data, keep any tool intro messages
+                    filteredText = text.replace(/TOOL_USE_START.*?TOOL_USE_END/, '').trim();
+                } catch (e) {
+                    console.error('Error parsing embedded tool use data:', e);
+                    // Remove the tool section even if parsing failed
+                    filteredText = text.replace(/TOOL_USE_START.*?TOOL_USE_END/, '').trim();
+                }
             }
+            
+            // Look for TOOL_ERROR_START...TOOL_ERROR_END pattern
+            const toolErrorMatch = filteredText.match(/TOOL_ERROR_START(.*?)TOOL_ERROR_END/);
+            if (toolErrorMatch) {
+                const errorDataString = toolErrorMatch[1];
+                try {
+                    const errorData = JSON.parse(errorDataString);
+                    this.addToolErrorBlock(errorData);
+                    
+                    // Remove the tool error markers and data from the text
+                    filteredText = filteredText.replace(/TOOL_ERROR_START.*?TOOL_ERROR_END/, '').trim();
+                } catch (e) {
+                    console.error('Error parsing embedded tool error data:', e);
+                    // Remove the tool section even if parsing failed
+                    filteredText = filteredText.replace(/TOOL_ERROR_START.*?TOOL_ERROR_END/, '').trim();
+                }
+            }
+            
+            return filteredText;
+            
+        } catch (error) {
+            console.error('Error processing tool use in text:', error);
+            return filteredText;
         }
     }
+    
+    processStreamingChunk(fullContent) {
+        // Keep "🔧 Using tool:" messages but filter out detailed tool responses
+        let cleanContent = fullContent;
+        
+        // Check for complete tool use pattern
+        const completeToolPattern = /TOOL_USE_START(.*?)TOOL_USE_END/s;
+        const toolMatch = fullContent.match(completeToolPattern);
+        
+        if (toolMatch) {
+            const toolDataString = toolMatch[1];
+            try {
+                const toolData = JSON.parse(toolDataString);
+                
+                // Only process if we haven't seen this tool use before
+                if (!this.processedToolIds.has(toolData.tool_id)) {
+                    this.processedToolIds.add(toolData.tool_id);
+                    
+                    // Track the tool use but don't create visible blocks
+                    this.addToolUseBlock(toolData);
+                }
+                
+                // Remove only the detailed TOOL_USE_START...TOOL_USE_END section
+                // Keep the "🔧 Using tool:" message
+                cleanContent = fullContent.replace(/TOOL_USE_START.*?TOOL_USE_END/s, '');
+                
+            } catch (e) {
+                console.error('Error parsing tool use data:', e);
+                // Remove the tool section even if parsing failed
+                cleanContent = fullContent.replace(/TOOL_USE_START.*?TOOL_USE_END/s, '');
+            }
+        }
+        
+        return { cleanContent };
+    }
+    
+    // createToolBlockAfterMessage method removed - tool blocks are now hidden
 }
 
 // Additional CSS for status indicators
@@ -958,9 +1033,6 @@ const additionalStyles = `
         padding: 24px 28px;
         line-height: 1.7;
         color: #2d3748;
-        background: linear-gradient(135deg, #fefefe 0%, #f8f9fa 100%);
-        border: 1px solid #e8ecef;
-        border-radius: 12px;
         max-width: none;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }

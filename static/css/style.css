@@ -735,68 +735,98 @@ body {
     border-color: #9ca3af;
 }
 
-/* Tool Use Display Blocks */
+/* Tool Use Display Blocks - Claude Style */
 .tool-use-block {
-    background: #f0f9ff;
-    border: 1px solid #0369a1;
-    border-left: 4px solid #0369a1;
+    background: #f8f9fa;
+    border: 1px solid #e5e7eb;
     border-radius: 8px;
     margin: 12px 0;
     overflow: hidden;
+    font-size: 14px;
 }
 
 .tool-use-header {
-    background: #0369a1;
-    color: white;
-    padding: 8px 12px;
-    font-weight: 600;
+    background: #f3f4f6;
+    color: #374151;
+    padding: 12px 16px;
+    font-weight: 500;
     font-size: 14px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
     cursor: pointer;
     user-select: none;
+    border-bottom: 1px solid #e5e7eb;
+    transition: background-color 0.2s ease;
 }
 
-.tool-use-header .tool-icon {
-    font-size: 16px;
+.tool-use-header:hover {
+    background: #e5e7eb;
 }
 
-.tool-use-header .expand-icon {
-    margin-left: auto;
+.tool-label {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.expand-caret {
+    color: #9ca3af;
     transition: transform 0.2s ease;
 }
 
-.tool-use-block.expanded .expand-icon {
-    transform: rotate(90deg);
+.tool-use-block.expanded .expand-caret {
+    transform: rotate(180deg);
 }
 
 .tool-use-content {
-    padding: 12px;
-    background: white;
-    border-top: 1px solid #bae6fd;
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
-    line-height: 1.4;
-    color: #1e40af;
     max-height: 0;
     overflow: hidden;
     transition: max-height 0.3s ease;
+    background: white;
 }
 
 .tool-use-block.expanded .tool-use-content {
-    max-height: 500px;
+    max-height: 600px;
     overflow-y: auto;
 }
 
-.tool-result {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
-    padding: 8px;
-    margin-top: 8px;
+.tool-details {
+    padding: 16px;
+}
+
+.tool-name-section,
+.tool-input-section,
+.tool-output-section {
+    margin-bottom: 16px;
+}
+
+.tool-name-section:last-child,
+.tool-input-section:last-child,
+.tool-output-section:last-child {
+    margin-bottom: 0;
+}
+
+.tool-details strong {
+    color: #374151;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 8px;
+}
+
+.tool-data {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #1f2937;
     white-space: pre-wrap;
     word-wrap: break-word;
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
 }
 
 .tool-error {

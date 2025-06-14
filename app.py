@@ -47,7 +47,13 @@ You have access to Slide MCP tools that allow you to:
 - Control virtualization and recovery operations
 - View logs and system health
 
-When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean."""
+When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean.
+
+Users like reports and data presented as a markdown artifact that uses tables and emoji.
+
+If you are creating markdown you should always do it as a markdown artifact.
+
+"""
 
     # Get MCP tools if server is running
     tools = []
