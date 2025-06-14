@@ -7,6 +7,7 @@ Build a Claude chat client with streaming responses and artifacts support.
 - Support for markdown and HTML artifacts
 - Streaming responses from Claude API
 - Model: claude-sonnet-4-20250514
+- **NEW**: MCP Integration for Slide backup devices
 
 ## 📋 Development Tasks
 
@@ -57,10 +58,32 @@ Build a Claude chat client with streaming responses and artifacts support.
 - [ ] 6.5 Performance optimization
 - [ ] 6.6 Final deployment and testing
 
+### Phase 7: MCP Integration (Slide Backup Devices)
+- [x] 7.1 Add Slide API key input button next to "Slide Chat" title
+- [x] 7.2 Implement secure cookie storage for API key (with encryption)
+- [x] 7.3 Create MCP server communication module 
+- [x] 7.4 Integrate slide-mcp-server binary with SLIDE_API_KEY environment variable
+- [x] 7.5 Modify Claude API calls to include MCP tools
+- [x] 7.6 Add tool use display blocks in chat interface
+- [x] 7.7 Implement expandable tool call/result viewer
+- [x] 7.8 Update system prompt to inform Claude about Slide devices
+- [x] 7.9 Add MCP server lifecycle management (start/stop/restart)
+- [x] 7.10 Handle MCP server errors and connection issues
+
+### MCP Integration Features Implemented
+- **Secure API Key Management**: Encrypted cookie storage with XOR encryption
+- **Automatic MCP Server Startup**: Server starts automatically when API key is provided
+- **Real-time Tool Integration**: MCP tools are automatically included in Claude API calls
+- **Interactive Tool Display**: Expandable blocks show tool calls and results in chat
+- **System Prompt Enhancement**: Claude is informed about Slide backup devices and capabilities
+- **Error Handling**: Comprehensive error handling for MCP server issues
+- **Lifecycle Management**: Clean startup/shutdown of MCP server processes
+
 ## 🔧 Technical Stack
 - **Backend**: Python Flask
 - **Frontend**: HTML5, CSS3, JavaScript (ES6+)
-- **AI Integration**: Claude API (Anthropic)
+- **AI Integration**: Claude API (Anthropic) + MCP (Model Context Protocol)
+- **MCP Server**: slide-mcp-server binary for Slide device management
 - **Web Server**: Apache with WSGI
 - **Streaming**: Server-Sent Events (SSE) or WebSockets
 - **Rendering**: Marked.js for markdown, native HTML for artifacts

@@ -7,6 +7,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 import re
 import httpx
+from mcp_manager import mcp_manager
 
 # Load environment variables
 load_dotenv()
@@ -27,51 +28,204 @@ claude_client = None  # Initialize lazily to avoid startup issues
 chat_sessions = {}
 
 def stream_claude_response(messages):
-    """Direct HTTP streaming to Claude API to bypass SDK issues"""
+    """Direct HTTP streaming to Claude API with proper MCP tool integration"""
     headers = {
         'Content-Type': 'application/json',
         'X-API-Key': CLAUDE_API_KEY,
         'anthropic-version': '2023-06-01'
     }
     
-    payload = {
-        'model': 'claude-3-5-sonnet-20241022',
-        'max_tokens': 4096,
-        'messages': messages,
-        'stream': True
-    }
+    # Prepare system message with Slide device information
+    system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+
+Slide is a backup provider that sells on-premises BCDR (Business Continuity and Disaster Recovery) devices that back up local servers and create copies in the cloud. Slide can virtualize failed servers both locally and in the cloud.
+
+You have access to Slide MCP tools that allow you to:
+- Monitor and manage Slide backup devices
+- Check backup status and schedules  
+- Access device information and metrics
+- Control virtualization and recovery operations
+- View logs and system health
+
+When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean."""
+
+    # Get MCP tools if server is running
+    tools = []
+    if mcp_manager.is_server_running():
+        tools = mcp_manager.get_tools_for_claude()
+        logger.info(f"Including {len(tools)} MCP tools in Claude request")
     
-    try:
-        import requests
-        response = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            json=payload,
-            headers=headers,
-            stream=True,
-            timeout=60
-        )
+    # Build the conversation with tool results
+    conversation_messages = messages.copy()
+    tool_use_detected = False
+    
+    while True:
+        payload = {
+            'model': 'claude-sonnet-4-20250514',
+            'max_tokens': 4096,
+            'system': system_message,
+            'messages': conversation_messages,
+            'stream': True
+        }
         
-        if response.status_code != 200:
-            raise Exception(f"API error: {response.status_code} - {response.text}")
+        # Add tools if available
+        if tools:
+            payload['tools'] = tools
         
-        # Process streaming response
-        for line in response.iter_lines(decode_unicode=True):
-            if line and line.startswith('data: '):
-                data_str = line[6:]  # Remove 'data: ' prefix
-                if data_str.strip() == '[DONE]':
-                    break
-                try:
-                    data = json.loads(data_str)
-                    if data.get('type') == 'content_block_delta':
-                        delta = data.get('delta', {})
-                        if delta.get('type') == 'text_delta':
-                            yield delta.get('text', '')
-                except json.JSONDecodeError:
-                    continue
+        try:
+            import requests
+            response = requests.post(
+                'https://api.anthropic.com/v1/messages',
+                json=payload,
+                headers=headers,
+                stream=True,
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"API error: {response.status_code} - {response.text}")
+            
+            # Collect the full response to check for tool use
+            full_response = ""
+            tool_uses = []
+            current_tool_use = None
+            current_input_json = ""
+            
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith('data: '):
+                    data_str = line[6:]  # Remove 'data: ' prefix
+                    if data_str.strip() == '[DONE]':
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        
+                        if data.get('type') == 'content_block_start':
+                            block = data.get('content_block', {})
+                            if block.get('type') == 'tool_use':
+                                # Start of a tool use block
+                                current_tool_use = {
+                                    'id': block.get('id'),
+                                    'name': block.get('name'),
+                                    'input': {}
+                                }
+                                current_input_json = ""
+                                tool_use_detected = True
+                                
+                        elif data.get('type') == 'content_block_delta':
+                            delta = data.get('delta', {})
+                            
+                            if delta.get('type') == 'text_delta':
+                                # Regular text content - stream it
+                                text = delta.get('text', '')
+                                full_response += text
+                                yield text
+                                
+                            elif delta.get('type') == 'input_json_delta' and current_tool_use:
+                                # Tool use input is being built
+                                current_input_json += delta.get('partial_json', '')
+                                
+                        elif data.get('type') == 'content_block_stop' and current_tool_use:
+                            # End of tool use block
+                            try:
+                                # Parse the complete input JSON
+                                if current_input_json.strip():
+                                    current_tool_use['input'] = json.loads(current_input_json)
+                                
+                                tool_uses.append(current_tool_use)
+                                current_tool_use = None
+                                current_input_json = ""
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Error parsing tool input JSON: {e}")
+                                current_tool_use = None
+                                current_input_json = ""
+                            
+                    except json.JSONDecodeError:
+                        continue
+            
+            # If we found tool uses, execute them and continue the conversation
+            if tool_uses:
+                # Build assistant message with tool use content blocks
+                assistant_content = []
+                if full_response.strip():
+                    assistant_content.append({
+                        'type': 'text',
+                        'text': full_response
+                    })
+                
+                for tool_use in tool_uses:
+                    assistant_content.append({
+                        'type': 'tool_use',
+                        'id': tool_use['id'],
+                        'name': tool_use['name'],
+                        'input': tool_use['input']
+                    })
+                
+                conversation_messages.append({
+                    'role': 'assistant',
+                    'content': assistant_content
+                })
+                
+                # Execute each tool and add results
+                tool_results = []
+                for tool_use in tool_uses:
+                    # Show tool use in UI
+                    yield f"\n\n🔧 **Using tool: {tool_use['name']}**\n"
                     
-    except Exception as e:
-        logger.error(f"Direct API call failed: {e}")
-        raise
+                    try:
+                        # Execute the tool
+                        tool_result = mcp_manager.call_tool(
+                            tool_use['name'], 
+                            tool_use['input']
+                        )
+                        
+                        # Show tool use block data for UI
+                        yield "TOOL_USE_START"
+                        yield json.dumps({
+                            'tool_name': tool_use['name'],
+                            'tool_input': tool_use['input'],
+                            'tool_result': tool_result,
+                            'tool_id': tool_use['id']
+                        })
+                        yield "TOOL_USE_END"
+                        
+                        tool_results.append({
+                            'type': 'tool_result',
+                            'tool_use_id': tool_use['id'],
+                            'content': json.dumps(tool_result)
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"Error executing tool {tool_use['name']}: {e}")
+                        # Show error block
+                        yield "TOOL_ERROR_START"
+                        yield json.dumps({
+                            'tool_name': tool_use['name'],
+                            'error': str(e),
+                            'tool_id': tool_use['id']
+                        })
+                        yield "TOOL_ERROR_END"
+                        
+                        tool_results.append({
+                            'type': 'tool_result',
+                            'tool_use_id': tool_use['id'],
+                            'content': f"Error: {str(e)}"
+                        })
+                
+                # Add tool results to conversation and continue
+                conversation_messages.append({
+                    'role': 'user',
+                    'content': tool_results
+                })
+                
+                # Continue the conversation so Claude can interpret the results
+                continue
+            else:
+                # No tool use, we're done
+                break
+                    
+        except Exception as e:
+            logger.error(f"Direct API call failed: {e}")
+            raise
 
 def get_claude_client():
     """Get Claude client with proper initialization - keeping for potential future use"""
@@ -424,6 +578,58 @@ def parse_artifacts(content):
 def health():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/mcp/start', methods=['POST'])
+def start_mcp_server():
+    """Start the MCP server with the provided API key"""
+    try:
+        data = request.get_json()
+        api_key = data.get('api_key', '').strip()
+        
+        if not api_key:
+            return jsonify({'error': 'API key is required'}), 400
+            
+        if not api_key.startswith('tk_'):
+            return jsonify({'error': 'Invalid API key format'}), 400
+        
+        success = mcp_manager.start_server(api_key)
+        
+        if success:
+            status = mcp_manager.get_server_status()
+            return jsonify({
+                'success': True,
+                'message': 'MCP server started successfully',
+                'status': status
+            })
+        else:
+            return jsonify({'error': 'Failed to start MCP server'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error starting MCP server: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/mcp/stop', methods=['POST'])
+def stop_mcp_server():
+    """Stop the MCP server"""
+    try:
+        mcp_manager.stop_server()
+        return jsonify({
+            'success': True,
+            'message': 'MCP server stopped successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error stopping MCP server: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/mcp/status')
+def mcp_server_status():
+    """Get MCP server status"""
+    try:
+        status = mcp_manager.get_server_status()
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error getting MCP server status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.errorhandler(404)
 def not_found(error):

@@ -41,6 +41,12 @@ body {
     align-items: center;
 }
 
+.chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .chat-header h1 {
     font-size: 24px;
     font-weight: 600;
@@ -505,4 +511,317 @@ body {
     .chat-input-container {
         padding: 16px 20px;
     }
+}
+
+/* API Key Button */
+.api-key-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.api-key-button:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+    color: #374151;
+}
+
+.api-key-button.has-key {
+    background: #dcfce7;
+    border-color: #bbf7d0;
+    color: #166534;
+}
+
+.api-key-button.has-key:hover {
+    background: #bbf7d0;
+    border-color: #86efac;
+}
+
+.api-key-status {
+    font-size: 11px;
+}
+
+/* Modal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.modal-overlay.show {
+    display: flex;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.modal-header h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.modal-body p {
+    margin-bottom: 16px;
+    color: #6b7280;
+    line-height: 1.5;
+}
+
+.input-group {
+    position: relative;
+    margin-bottom: 16px;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #374151;
+    font-size: 14px;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 12px 40px 12px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+}
+
+.input-group input:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.toggle-visibility {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s ease;
+    margin-top: 13px;
+}
+
+.toggle-visibility:hover {
+    color: #374151;
+}
+
+.modal-info {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.modal-info p {
+    margin: 0;
+    font-size: 13px;
+    color: #0369a1;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 12px;
+    padding: 20px 24px;
+    border-top: 1px solid #e5e5e5;
+    background: #f9fafb;
+}
+
+.btn-primary {
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.btn-primary:hover {
+    background: #1d4ed8;
+}
+
+.btn-secondary {
+    background: #dc2626;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.btn-secondary:hover {
+    background: #b91c1c;
+}
+
+.btn-cancel {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-left: auto;
+}
+
+.btn-cancel:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+}
+
+/* Tool Use Display Blocks */
+.tool-use-block {
+    background: #f0f9ff;
+    border: 1px solid #0369a1;
+    border-left: 4px solid #0369a1;
+    border-radius: 8px;
+    margin: 12px 0;
+    overflow: hidden;
+}
+
+.tool-use-header {
+    background: #0369a1;
+    color: white;
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.tool-use-header .tool-icon {
+    font-size: 16px;
+}
+
+.tool-use-header .expand-icon {
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.tool-use-block.expanded .expand-icon {
+    transform: rotate(90deg);
+}
+
+.tool-use-content {
+    padding: 12px;
+    background: white;
+    border-top: 1px solid #bae6fd;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #1e40af;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.tool-use-block.expanded .tool-use-content {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.tool-result {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.tool-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 4px solid #dc2626;
+    border-radius: 8px;
+    margin: 12px 0;
+    padding: 12px;
+    color: #dc2626;
+}
+
+.tool-error .error-icon {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+/* Status indicator updates for MCP */
+.status-dot.status-mcp {
+    background-color: #0369a1;
+    animation: pulse 2s infinite;
+}
+
+.status-dot.status-mcp-error {
+    background-color: #dc2626;
+    animation: pulse 2s infinite;
 } 

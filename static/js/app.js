@@ -4,11 +4,13 @@ class ClaudeChatClient {
         this.sessionId = this.generateSessionId();
         this.currentEventSource = null;
         this.artifacts = [];
+        this.slideApiKey = null;
         
         this.initializeElements();
         this.setupEventListeners();
         this.initializeTime();
         this.configureMarkdown();
+        this.loadApiKey();
     }
     
     initializeElements() {
@@ -21,6 +23,17 @@ class ClaudeChatClient {
         this.clearArtifactsBtn = document.getElementById('clear-artifacts');
         this.characterCount = document.querySelector('.character-count');
         this.loadingOverlay = document.getElementById('loading-overlay');
+        
+        // API Key elements
+        this.apiKeyButton = document.getElementById('api-key-button');
+        this.apiKeyModal = document.getElementById('api-key-modal');
+        this.apiKeyInput = document.getElementById('api-key-input');
+        this.apiKeyStatus = document.getElementById('api-key-status');
+        this.modalClose = document.getElementById('modal-close');
+        this.saveApiKey = document.getElementById('save-api-key');
+        this.removeApiKey = document.getElementById('remove-api-key');
+        this.cancelModal = document.getElementById('cancel-modal');
+        this.toggleVisibility = document.getElementById('toggle-visibility');
     }
     
     setupEventListeners() {
@@ -47,6 +60,38 @@ class ClaudeChatClient {
         // Clear artifacts
         this.clearArtifactsBtn.addEventListener('click', () => {
             this.clearArtifacts();
+        });
+        
+        // API Key modal events
+        this.apiKeyButton.addEventListener('click', () => {
+            this.openApiKeyModal();
+        });
+        
+        this.modalClose.addEventListener('click', () => {
+            this.closeApiKeyModal();
+        });
+        
+        this.cancelModal.addEventListener('click', () => {
+            this.closeApiKeyModal();
+        });
+        
+        this.saveApiKey.addEventListener('click', () => {
+            this.saveApiKeyHandler();
+        });
+        
+        this.removeApiKey.addEventListener('click', () => {
+            this.removeApiKeyHandler();
+        });
+        
+        this.toggleVisibility.addEventListener('click', () => {
+            this.togglePasswordVisibility();
+        });
+        
+        // Close modal on overlay click
+        this.apiKeyModal.addEventListener('click', (e) => {
+            if (e.target === this.apiKeyModal) {
+                this.closeApiKeyModal();
+            }
         });
         
         // Handle page unload
@@ -254,6 +299,9 @@ class ClaudeChatClient {
                 
                 let assistantMessage = null;
                 let fullContent = '';
+                let currentBuffer = '';
+                let inToolUse = false;
+                let inToolError = false;
                 
                 // Remove typing indicator
                 const typingIndicator = document.querySelector('.typing-indicator');
@@ -271,35 +319,36 @@ class ClaudeChatClient {
                         }
                         
                         const chunk = decoder.decode(value, { stream: true });
-                        const lines = chunk.split('\n');
+                        currentBuffer += chunk;
+                        
+                        // Process complete lines
+                        const lines = currentBuffer.split('\n');
+                        currentBuffer = lines.pop() || ''; // Keep incomplete line in buffer
                         
                         for (const line of lines) {
                             if (line.startsWith('data: ')) {
                                 try {
                                     const data = JSON.parse(line.slice(6));
                                     
-                                                                         if (data.type === 'text') {
-                                         if (!assistantMessage) {
-                                             assistantMessage = this.addMessage('assistant', '');
-                                         }
-                                         
-                                         fullContent += data.content;
-                                         const contentDiv = assistantMessage.querySelector('.message-content');
-                                         contentDiv.innerHTML = this.renderMarkdown(fullContent);
-                                         this.scrollToBottom();
-                                         
-                                     } else if (data.type === 'artifacts_update') {
-                                         // Handle real-time artifact updates
-                                         this.updateStreamingArtifacts(data.content);
-                                         
-                                     } else if (data.type === 'artifacts_remove') {
-                                         // Handle artifact removal (empty artifacts cleanup)
-                                         this.removeArtifacts(data.content);
-                                         
-                                     } else if (data.type === 'artifact') {
-                                         // Legacy artifact handling (for compatibility)
-                                         this.addArtifact(data.content);
+                                    if (data.type === 'text') {
+                                        if (!assistantMessage) {
+                                            assistantMessage = this.addMessage('assistant', '');
+                                        }
                                         
+                                        fullContent += data.content;
+                                        const contentDiv = assistantMessage.querySelector('.message-content');
+                                        contentDiv.innerHTML = this.renderMarkdown(fullContent);
+                                        this.scrollToBottom();
+                                        
+                                    } else if (data.type === 'artifacts_update') {
+                                        this.updateStreamingArtifacts(data.content);
+                                        
+                                    } else if (data.type === 'artifacts_remove') {
+                                        this.removeArtifacts(data.content);
+                                        
+                                    } else if (data.type === 'artifact') {
+                                        this.addArtifact(data.content);
+                                       
                                     } else if (data.type === 'complete') {
                                         this.setInputEnabled(true);
                                         this.setStatus('ready', 'Ready');
@@ -312,6 +361,48 @@ class ClaudeChatClient {
                                 } catch (e) {
                                     console.error('Error parsing stream data:', e);
                                 }
+                            }
+                            // Handle tool use markers
+                            else if (line === 'TOOL_USE_START') {
+                                inToolUse = true;
+                            }
+                            else if (line === 'TOOL_USE_END') {
+                                inToolUse = false;
+                            }
+                            else if (line === 'TOOL_ERROR_START') {
+                                inToolError = true;
+                            }
+                            else if (line === 'TOOL_ERROR_END') {
+                                inToolError = false;
+                            }
+                            else if (inToolUse) {
+                                // This is tool use data
+                                try {
+                                    const toolData = JSON.parse(line);
+                                    this.addToolUseBlock(toolData);
+                                } catch (e) {
+                                    console.error('Error parsing tool use data:', e);
+                                }
+                            }
+                            else if (inToolError) {
+                                // This is tool error data
+                                try {
+                                    const errorData = JSON.parse(line);
+                                    this.addToolErrorBlock(errorData);
+                                } catch (e) {
+                                    console.error('Error parsing tool error data:', e);
+                                }
+                            }
+                            else if (line.trim() && !line.startsWith('data: ')) {
+                                // Regular streaming text (not JSON data)
+                                if (!assistantMessage) {
+                                    assistantMessage = this.addMessage('assistant', '');
+                                }
+                                
+                                fullContent += line + '\n';
+                                const contentDiv = assistantMessage.querySelector('.message-content');
+                                contentDiv.innerHTML = this.renderMarkdown(fullContent);
+                                this.scrollToBottom();
                             }
                         }
                         
@@ -522,7 +613,309 @@ class ClaudeChatClient {
     }
     
     scrollToBottom() {
-        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        const isAtBottom = this.chatMessages.scrollTop + this.chatMessages.clientHeight >= this.chatMessages.scrollHeight - 10;
+        if (isAtBottom || this.chatMessages.scrollTop === 0) {
+            this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        }
+    }
+    
+    // API Key Management Methods
+    openApiKeyModal() {
+        this.apiKeyModal.classList.add('show');
+        this.apiKeyInput.focus();
+        
+        // Pre-fill with existing key if available
+        if (this.slideApiKey) {
+            this.apiKeyInput.value = this.slideApiKey;
+        }
+    }
+    
+    closeApiKeyModal() {
+        this.apiKeyModal.classList.remove('show');
+        this.apiKeyInput.value = '';
+        this.apiKeyInput.type = 'password';
+        this.updateToggleVisibilityIcon(false);
+    }
+    
+    togglePasswordVisibility() {
+        const isPassword = this.apiKeyInput.type === 'password';
+        this.apiKeyInput.type = isPassword ? 'text' : 'password';
+        this.updateToggleVisibilityIcon(!isPassword);
+    }
+    
+    updateToggleVisibilityIcon(isVisible) {
+        const icon = this.toggleVisibility.querySelector('svg');
+        if (isVisible) {
+            // Eye with slash (hide)
+            icon.innerHTML = `
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M21 21L3 3"></path>
+            `;
+        } else {
+            // Regular eye (show)
+            icon.innerHTML = `
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+            `;
+        }
+    }
+    
+    saveApiKeyHandler() {
+        const apiKey = this.apiKeyInput.value.trim();
+        
+        if (!apiKey) {
+            alert('Please enter an API key');
+            return;
+        }
+        
+        if (!apiKey.startsWith('tk_')) {
+            alert('Invalid API key format. Slide API keys should start with "tk_"');
+            return;
+        }
+        
+        try {
+            this.slideApiKey = apiKey;
+            this.saveApiKeyToCookie(apiKey);
+            this.updateApiKeyStatus(true);
+            this.closeApiKeyModal();
+            
+            // Automatically start MCP server with the new API key
+            this.startMCPServer(apiKey);
+            
+            // Show success message
+            console.log('Slide API key saved successfully');
+        } catch (error) {
+            console.error('Error saving API key:', error);
+            alert('Error saving API key. Please try again.');
+        }
+    }
+    
+    removeApiKeyHandler() {
+        if (confirm('Are you sure you want to remove the Slide API key?')) {
+            // Stop MCP server first
+            this.stopMCPServer();
+            
+            this.slideApiKey = null;
+            this.removeApiKeyFromCookie();
+            this.updateApiKeyStatus(false);
+            this.closeApiKeyModal();
+            
+            console.log('Slide API key removed');
+        }
+    }
+    
+    loadApiKey() {
+        try {
+            const encryptedKey = this.getCookie('slide_api_key');
+            if (encryptedKey) {
+                this.slideApiKey = this.decryptApiKey(encryptedKey);
+                this.updateApiKeyStatus(true);
+                
+                // Automatically start MCP server if API key is loaded
+                this.startMCPServer(this.slideApiKey);
+            } else {
+                this.updateApiKeyStatus(false);
+            }
+        } catch (error) {
+            console.error('Error loading API key:', error);
+            this.updateApiKeyStatus(false);
+        }
+    }
+    
+    updateApiKeyStatus(hasKey) {
+        if (hasKey) {
+            this.apiKeyButton.classList.add('has-key');
+            this.apiKeyStatus.textContent = 'API Key Set';
+        } else {
+            this.apiKeyButton.classList.remove('has-key');
+            this.apiKeyStatus.textContent = 'No API Key';
+        }
+    }
+    
+    saveApiKeyToCookie(apiKey) {
+        const encrypted = this.encryptApiKey(apiKey);
+        this.setCookie('slide_api_key', encrypted, 365); // 1 year expiry
+    }
+    
+    removeApiKeyFromCookie() {
+        this.setCookie('slide_api_key', '', -1);
+    }
+    
+    // Simple encryption/decryption using base64 and simple XOR
+    // Note: This is not cryptographically secure, but provides basic obfuscation
+    encryptApiKey(apiKey) {
+        const key = 'slide-chat-encryption-key-2024';
+        let encrypted = '';
+        
+        for (let i = 0; i < apiKey.length; i++) {
+            const charCode = apiKey.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+            encrypted += String.fromCharCode(charCode);
+        }
+        
+        return btoa(encrypted);
+    }
+    
+    decryptApiKey(encryptedKey) {
+        const key = 'slide-chat-encryption-key-2024';
+        const decoded = atob(encryptedKey);
+        let decrypted = '';
+        
+        for (let i = 0; i < decoded.length; i++) {
+            const charCode = decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+            decrypted += String.fromCharCode(charCode);
+        }
+        
+        return decrypted;
+    }
+    
+    // Cookie utilities
+    setCookie(name, value, days) {
+        let expires = '';
+        if (days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            expires = '; expires=' + date.toUTCString();
+        }
+        document.cookie = name + '=' + (value || '') + expires + '; path=/; SameSite=Strict';
+    }
+    
+    getCookie(name) {
+        const nameEQ = name + '=';
+        const ca = document.cookie.split(';');
+        for (let i = 0; i < ca.length; i++) {
+            let c = ca[i];
+            while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+            if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+        }
+        return null;
+    }
+    
+    // MCP Server Management Methods
+    async startMCPServer(apiKey) {
+        try {
+            const response = await fetch('/mcp/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    api_key: apiKey
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                console.log('MCP server started:', result.message);
+                this.setStatus('ready', `Ready (${result.status.tools_count} tools)`);
+            } else {
+                console.error('Failed to start MCP server:', result.error);
+                this.setStatus('error', 'MCP Error');
+            }
+        } catch (error) {
+            console.error('Error starting MCP server:', error);
+            this.setStatus('error', 'MCP Error');
+        }
+    }
+    
+    async stopMCPServer() {
+        try {
+            const response = await fetch('/mcp/stop', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                console.log('MCP server stopped:', result.message);
+                this.setStatus('ready', 'Ready');
+            } else {
+                console.error('Failed to stop MCP server:', result.error);
+            }
+        } catch (error) {
+            console.error('Error stopping MCP server:', error);
+        }
+    }
+    
+    async getMCPStatus() {
+        try {
+            const response = await fetch('/mcp/status');
+            const status = await response.json();
+            
+            if (status.running) {
+                this.setStatus('ready', `Ready (${status.tools_count} tools)`);
+            } else {
+                this.setStatus('ready', 'Ready');
+            }
+            
+            return status;
+        } catch (error) {
+            console.error('Error getting MCP status:', error);
+            return { running: false, tools_count: 0, tools: [] };
+        }
+    }
+    
+    // Tool Use Display Methods
+    addToolUseBlock(toolData) {
+        const toolBlock = document.createElement('div');
+        toolBlock.className = 'tool-use-block';
+        toolBlock.setAttribute('data-tool-id', toolData.tool_id);
+        
+        const toolId = 'tool-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+        
+        toolBlock.innerHTML = `
+            <div class="tool-use-header" onclick="window.claudeChat.toggleToolUse('${toolId}')">
+                <span class="tool-icon">🔧</span>
+                <span class="tool-name">${toolData.tool_name}</span>
+                <span class="expand-icon">▶</span>
+            </div>
+            <div class="tool-use-content">
+                <div class="tool-input">
+                    <strong>Input:</strong>
+                    <pre class="tool-result">${JSON.stringify(toolData.tool_input, null, 2)}</pre>
+                </div>
+                <div class="tool-output">
+                    <strong>Result:</strong>
+                    <pre class="tool-result">${JSON.stringify(toolData.tool_result, null, 2)}</pre>
+                </div>
+            </div>
+        `;
+        
+        toolBlock.id = toolId;
+        this.chatMessages.appendChild(toolBlock);
+        this.scrollToBottom();
+    }
+    
+    addToolErrorBlock(errorData) {
+        const errorBlock = document.createElement('div');
+        errorBlock.className = 'tool-error';
+        errorBlock.setAttribute('data-tool-id', errorData.tool_id);
+        
+        errorBlock.innerHTML = `
+            <span class="error-icon">❌</span>
+            <strong>Tool Error: ${errorData.tool_name}</strong>
+            <br>
+            <span>${errorData.error}</span>
+        `;
+        
+        this.chatMessages.appendChild(errorBlock);
+        this.scrollToBottom();
+    }
+    
+    toggleToolUse(toolId) {
+        const toolBlock = document.getElementById(toolId);
+        if (toolBlock) {
+            const isExpanded = toolBlock.classList.contains('expanded');
+            if (isExpanded) {
+                toolBlock.classList.remove('expanded');
+            } else {
+                toolBlock.classList.add('expanded');
+            }
+        }
     }
 }
 

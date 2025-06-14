@@ -17,7 +17,17 @@
         <!-- Chat Panel (Left) -->
         <div class="chat-panel">
             <div class="chat-header">
-                <h1>Slide Chat</h1>
+                <div class="chat-header-left">
+                    <h1>Slide Chat</h1>
+                    <button id="api-key-button" class="api-key-button" title="Configure Slide API Key">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path>
+                            <path d="m21 2-9.6 9.6"></path>
+                            <circle cx="7.5" cy="15.5" r=".5"></circle>
+                        </svg>
+                        <span class="api-key-status" id="api-key-status">No API Key</span>
+                    </button>
+                </div>
                 <div class="status-indicator" id="status-indicator">
                     <span class="status-dot"></span>
                     <span class="status-text">Ready</span>
@@ -95,6 +105,42 @@
                     <h3>No artifacts yet</h3>
                     <p>When Claude creates HTML pages, code, or other artifacts, they'll appear here for you to view and interact with.</p>
                 </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- API Key Modal -->
+    <div class="modal-overlay" id="api-key-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Configure Slide API Key</h3>
+                <button class="modal-close" id="modal-close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Enter your Slide API key to enable MCP integration with your Slide backup devices:</p>
+                <div class="input-group">
+                    <label for="api-key-input">API Key:</label>
+                    <input type="password" id="api-key-input" placeholder="tk_..." maxlength="200">
+                    <button type="button" id="toggle-visibility" class="toggle-visibility">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-info">
+                    <p><strong>Note:</strong> Your API key will be encrypted and stored securely in your browser for future sessions.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="save-api-key" class="btn-primary">Save API Key</button>
+                <button type="button" id="remove-api-key" class="btn-secondary">Remove Key</button>
+                <button type="button" id="cancel-modal" class="btn-cancel">Cancel</button>
             </div>
         </div>
     </div>
