@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import sys
 import os
+from dotenv import load_dotenv
 
 # Add the project directory to the Python path
 sys.path.insert(0, "/var/www/chat.slide.recipes/")
 
-# Set environment variables
-os.environ['CLAUDE_API_KEY'] = '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'
+# Explicitly load .env file with absolute path for Apache/mod_wsgi
+load_dotenv("/var/www/chat.slide.recipes/.env")
 
 from app import app
 
