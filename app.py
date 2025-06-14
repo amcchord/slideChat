@@ -24,7 +24,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Initialize Anthropic client
-CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY', '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')
+CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY')
+if not CLAUDE_API_KEY:
+    raise ValueError("CLAUDE_API_KEY environment variable is required. Please check your configuration.")
 claude_client = None  # Initialize lazily to avoid startup issues
 
 # Global variables for session management

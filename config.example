@@ -1,0 +1,11 @@
+# Environment Variables for Slide Chat Application
+# Copy this file to config.env and fill in your actual values
+
+# Anthropic Claude API Key
+CLAUDE_API_KEY=your_anthropic_api_key_here
+
+# Flask Secret Key (change this to a random string in production)
+SECRET_KEY=your_secret_key_here
+
+# Optional: Set to production for production environment
+FLASK_ENV=development 
