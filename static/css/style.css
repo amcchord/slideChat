@@ -248,6 +248,22 @@ body {
     color: #9ca3af;
 }
 
+#message-input:disabled {
+    background: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+#message-input:disabled::placeholder {
+    color: #d1d5db;
+}
+
+.input-wrapper:has(#message-input:disabled) {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    cursor: not-allowed;
+}
+
 .send-button {
     position: absolute;
     right: 8px;
@@ -544,6 +560,20 @@ body {
 .api-key-button.has-key:hover {
     background: #bbf7d0;
     border-color: #86efac;
+}
+
+.api-key-button:not(.has-key) {
+    animation: api-key-pulse 2s infinite;
+    border-color: #f59e0b;
+}
+
+@keyframes api-key-pulse {
+    0%, 100% { 
+        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+    }
+    50% { 
+        box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+    }
 }
 
 .api-key-status {
@@ -854,4 +884,28 @@ body {
 .status-dot.status-mcp-error {
     background-color: #dc2626;
     animation: pulse 2s infinite;
+} 
+
+/* Version display */
+.version-display {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    background: rgba(0, 0, 0, 0.1);
+    color: #6b7280;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+    transition: all 0.2s ease;
+    user-select: none;
+    pointer-events: none;
+}
+
+.version-display:hover {
+    background: rgba(0, 0, 0, 0.15);
+    color: #374151;
 } 

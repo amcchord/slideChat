@@ -9,6 +9,9 @@ import re
 import httpx
 from mcp_manager import mcp_manager
 
+# Application version
+VERSION = "1.0.2"
+
 # Load environment variables
 load_dotenv()
 
@@ -51,7 +54,34 @@ When users ask about their backup infrastructure, servers, or disaster recovery,
 
 Users like reports and data presented as a markdown artifact that uses tables and emoji.
 
-If you are creating markdown you should always do it as a markdown artifact.
+
+IMPORTANT: When creating markdown you should always do it as a markdown artifact.
+
+IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wrap them in <artifact> tags like this:
+
+<artifact type="markdown" title="Report Title">
+# Your markdown content here
+</artifact>
+
+<artifact type="html" title="Web Page">
+<!DOCTYPE html>
+<html>...</html>
+</artifact>
+
+<artifact type="code" language="python" title="Python Script">
+def hello_world():
+    print("Hello, World!")
+</artifact>
+
+Use these artifact tags for ANY substantial content that could be rendered separately from your explanation, including:
+- Markdown reports and documents
+- HTML pages and components  
+- Code in any programming language
+- JSON data structures
+- XML files
+- Any other structured content
+
+The artifact tags help the interface properly display and manage your creations.
 
 """
 
@@ -175,7 +205,7 @@ If you are creating markdown you should always do it as a markdown artifact.
                 tool_results = []
                 for tool_use in tool_uses:
                     # Show tool use in UI
-                    yield f"\n\n🔧 **Using tool: {tool_use['name']}**\n"
+                    yield f"\n\n🔧 **Using tool: {tool_use['name']}**\n\n"
                     
                     try:
                         # Execute the tool
@@ -240,7 +270,7 @@ def get_claude_client():
 @app.route('/')
 def index():
     """Main chat interface"""
-    return render_template('index.html')
+    return render_template('index.html', version=VERSION)
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -352,231 +382,154 @@ def chat():
         return jsonify({'error': str(e)}), 500
 
 def filter_chat_content(text_chunk, inside_artifact):
-    """Pattern-based filtering to exclude artifact content from chat"""
-    # Build up a small buffer to check for artifact patterns
+    """Filter out artifact content from chat using <artifact> tags"""
     buffer = text_chunk
     filtered_text = ""
     current_inside = inside_artifact
     
-    # Look for start patterns
+    # Look for artifact start and end tags
     if not current_inside:
-        # Check for code block start ```
-        if '```' in buffer:
-            # Found start of code block
-            parts = buffer.split('```', 1)
-            filtered_text += parts[0]  # Include text before ```
+        # Check for artifact start tag
+        if '<artifact' in buffer.lower():
+            # Found start of artifact
+            parts = re.split(r'<artifact[^>]*>', buffer, 1, re.IGNORECASE)
+            filtered_text += parts[0]  # Include text before <artifact>
             current_inside = True
-            # Don't include the ``` and everything after
-        elif '<html' in buffer.lower():
-            # Found start of HTML
-            parts = re.split(r'<html', buffer, 1, re.IGNORECASE)
-            filtered_text += parts[0]  # Include text before <html
-            current_inside = True
-            # Don't include <html and everything after
+            # Don't include the <artifact> tag and everything after
         else:
             # No artifact start found, include all text
             filtered_text += buffer
     else:
-        # We're inside an artifact, look for end patterns
-        if '```' in buffer:
-            # Found end of code block
-            parts = buffer.split('```', 1)
-            # Don't include anything before and including ```
+        # We're inside an artifact, look for end tag
+        if '</artifact>' in buffer.lower():
+            # Found end of artifact
+            parts = re.split(r'</artifact>', buffer, 1, re.IGNORECASE)
+            # Don't include anything before and including </artifact>
             if len(parts) > 1:
                 current_inside = False
-                # Include text after ``` (if any)
-                filtered_text += parts[1]
-        elif '</html>' in buffer.lower():
-            # Found end of HTML
-            parts = re.split(r'</html>', buffer, 1, re.IGNORECASE)
-            # Don't include anything before and including </html>
-            if len(parts) > 1:
-                current_inside = False
-                # Include text after </html> (if any)
+                # Include text after </artifact> (if any)
                 filtered_text += parts[1]
         # If we're still inside artifact, don't include any text
     
     return filtered_text, current_inside
 
 def parse_streaming_artifacts(content, current_artifacts):
-    """Parse artifacts from streaming content and return updates"""
+    """Parse artifacts from streaming content using <artifact> tags"""
     artifacts_update = []
     
-    # Look for code block starts (must have language or be followed by newline)
-    code_starts = list(re.finditer(r'```(\w+)\n', content))
+    # Look for artifact tags
+    artifact_pattern = r'<artifact\s+([^>]*)>(.*?)</artifact>'
+    artifact_start_pattern = r'<artifact\s+([^>]*)>'
     
-    # Look for markdown blocks specifically
-    markdown_starts = list(re.finditer(r'```(markdown|md)\n', content, re.IGNORECASE))
+    # Find complete artifacts first
+    complete_artifacts = list(re.finditer(artifact_pattern, content, re.DOTALL | re.IGNORECASE))
     
-    # Look for HTML starts
-    html_starts = list(re.finditer(r'<html[^>]*>', content, re.IGNORECASE))
-    
-    # Process code blocks
-    for match in code_starts:
+    for match in complete_artifacts:
         start_pos = match.start()
-        language = match.group(1)
+        attributes_str = match.group(1)
+        artifact_content = match.group(2).strip()
         
-        # Skip if no language specified or if it's just generic text
-        if not language or language.lower() in ['text', 'txt']:
+        # Parse attributes
+        attributes = {}
+        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
+        attr_matches = re.findall(attr_pattern, attributes_str)
+        for attr_name, attr_value in attr_matches:
+            attributes[attr_name.lower()] = attr_value
+        
+        # Create or update artifact
+        artifact_id = f'artifact_{start_pos}'
+        artifact = {
+            'id': artifact_id,
+            'type': attributes.get('type', 'text'),
+            'title': attributes.get('title', 'Untitled Artifact'),
+            'content': artifact_content,
+            'complete': True
+        }
+        
+        # Add language for code artifacts
+        if artifact['type'] == 'code':
+            artifact['language'] = attributes.get('language', 'text')
+        
+        # Only update if content has changed
+        if start_pos not in current_artifacts or current_artifacts[start_pos].get('content') != artifact_content:
+            current_artifacts[start_pos] = artifact
+            artifacts_update.append(artifact)
+    
+    # Find incomplete artifacts (opening tag without closing tag)
+    incomplete_starts = list(re.finditer(artifact_start_pattern, content, re.IGNORECASE))
+    
+    for match in incomplete_starts:
+        start_pos = match.start()
+        
+        # Skip if this is part of a complete artifact we already processed
+        is_complete = any(complete_match.start() == start_pos for complete_match in complete_artifacts)
+        if is_complete:
             continue
         
-        # Special handling for markdown
-        is_markdown = language.lower() in ['markdown', 'md']
+        attributes_str = match.group(1)
         
-        # Check if this is a new artifact
-        if start_pos not in current_artifacts:
-            # Look for the end of this code block
-            end_pattern = r'```'
-            remaining_content = content[match.end():]
-            end_match = re.search(end_pattern, remaining_content)
-            
-            if end_match:
-                # Complete code block
-                code_content = remaining_content[:end_match.start()]
-                artifact = {
-                    'id': f'code_{start_pos}',
-                    'type': 'markdown' if is_markdown else 'code',
-                    'language': language,
-                    'content': code_content.strip(),
-                    'title': 'Markdown Document' if is_markdown else f'{language.title()} Code',
-                    'complete': True
-                }
-                current_artifacts[start_pos] = artifact
-                artifacts_update.append(artifact)
-            else:
-                # Incomplete code block - stream what we have
-                code_content = remaining_content
-                artifact = {
-                    'id': f'code_{start_pos}',
-                    'type': 'markdown' if is_markdown else 'code',
-                    'language': language,
-                    'content': code_content.strip(),
-                    'title': 'Markdown Document' if is_markdown else f'{language.title()} Code',
-                    'complete': False
-                }
-                current_artifacts[start_pos] = artifact
-                artifacts_update.append(artifact)
-        else:
-            # Update existing artifact
-            existing = current_artifacts[start_pos]
-            if not existing.get('complete', False):
-                # Look for the end again
-                end_pattern = r'```'
-                remaining_content = content[match.end():]
-                end_match = re.search(end_pattern, remaining_content)
-                
-                if end_match:
-                    # Now complete
-                    code_content = remaining_content[:end_match.start()]
-                    existing['content'] = code_content.strip()
-                    existing['complete'] = True
-                    artifacts_update.append(existing)
-                else:
-                    # Still building
-                    code_content = remaining_content
-                    new_content = code_content.strip()
-                    if new_content != existing['content']:
-                        existing['content'] = new_content
-                        artifacts_update.append(existing)
-    
-    # Process HTML artifacts
-    for match in html_starts:
-        start_pos = match.start()
+        # Parse attributes
+        attributes = {}
+        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
+        attr_matches = re.findall(attr_pattern, attributes_str)
+        for attr_name, attr_value in attr_matches:
+            attributes[attr_name.lower()] = attr_value
         
-        if start_pos not in current_artifacts:
-            # Look for closing </html>
-            remaining_content = content[start_pos:]
-            end_match = re.search(r'</html>', remaining_content, re.IGNORECASE)
-            
-            if end_match:
-                # Complete HTML
-                html_content = remaining_content[:end_match.end()]
-                artifact = {
-                    'id': f'html_{start_pos}',
-                    'type': 'html',
-                    'content': html_content,
-                    'title': 'HTML Document',
-                    'complete': True
-                }
-                current_artifacts[start_pos] = artifact
-                artifacts_update.append(artifact)
-            else:
-                # Incomplete HTML - stream what we have
-                html_content = remaining_content
-                artifact = {
-                    'id': f'html_{start_pos}',
-                    'type': 'html',
-                    'content': html_content,
-                    'title': 'HTML Document',
-                    'complete': False
-                }
-                current_artifacts[start_pos] = artifact
-                artifacts_update.append(artifact)
-        else:
-            # Update existing HTML artifact
-            existing = current_artifacts[start_pos]
-            if not existing.get('complete', False):
-                remaining_content = content[start_pos:]
-                end_match = re.search(r'</html>', remaining_content, re.IGNORECASE)
-                
-                if end_match:
-                    # Now complete
-                    html_content = remaining_content[:end_match.end()]
-                    existing['content'] = html_content
-                    existing['complete'] = True
-                    artifacts_update.append(existing)
-                else:
-                    # Still building
-                    new_content = remaining_content
-                    if new_content != existing['content']:
-                        existing['content'] = new_content
-                        artifacts_update.append(existing)
+        # Get content after the opening tag
+        remaining_content = content[match.end():].strip()
+        
+        # Create incomplete artifact
+        artifact_id = f'artifact_{start_pos}'
+        artifact = {
+            'id': artifact_id,
+            'type': attributes.get('type', 'text'),
+            'title': attributes.get('title', 'Untitled Artifact'),
+            'content': remaining_content,
+            'complete': False
+        }
+        
+        # Add language for code artifacts
+        if artifact['type'] == 'code':
+            artifact['language'] = attributes.get('language', 'text')
+        
+        # Only update if this is new or content has changed
+        if start_pos not in current_artifacts or current_artifacts[start_pos].get('content') != remaining_content:
+            current_artifacts[start_pos] = artifact
+            artifacts_update.append(artifact)
     
     return artifacts_update
 
 def parse_artifacts(content):
-    """Parse artifacts from Claude's response (legacy function for compatibility)"""
+    """Parse artifacts from Claude's response using <artifact> tags"""
     artifacts = []
     
-    # Pattern for artifacts (markdown, HTML, code blocks)
-    artifact_patterns = [
-        # HTML artifacts
-        r'<html[^>]*>.*?</html>',
-        # Code blocks with language specification
-        r'```(\w+)\n(.*?)\n```',
-        # Generic code blocks
-        r'```\n(.*?)\n```'
-    ]
+    # Look for artifact tags
+    artifact_pattern = r'<artifact\s+([^>]*)>(.*?)</artifact>'
+    matches = re.finditer(artifact_pattern, content, re.DOTALL | re.IGNORECASE)
     
-    for pattern in artifact_patterns:
-        matches = re.finditer(pattern, content, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            if pattern.startswith(r'<html'):
-                # HTML artifact
-                artifacts.append({
-                    'type': 'html',
-                    'content': match.group(0),
-                    'title': 'HTML Document'
-                })
-            elif pattern.startswith(r'```(\w+)'):
-                # Code block with language
-                language = match.group(1)
-                code = match.group(2)
-                artifacts.append({
-                    'type': 'code',
-                    'language': language,
-                    'content': code,
-                    'title': f'{language.title()} Code'
-                })
-            else:
-                # Generic code block
-                code = match.group(1)
-                artifacts.append({
-                    'type': 'code',
-                    'language': 'text',
-                    'content': code,
-                    'title': 'Code Block'
-                })
+    for match in matches:
+        attributes_str = match.group(1)
+        artifact_content = match.group(2).strip()
+        
+        # Parse attributes
+        attributes = {}
+        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
+        attr_matches = re.findall(attr_pattern, attributes_str)
+        for attr_name, attr_value in attr_matches:
+            attributes[attr_name.lower()] = attr_value
+        
+        # Create artifact
+        artifact = {
+            'type': attributes.get('type', 'text'),
+            'title': attributes.get('title', 'Untitled Artifact'),
+            'content': artifact_content
+        }
+        
+        # Add language for code artifacts
+        if artifact['type'] == 'code':
+            artifact['language'] = attributes.get('language', 'text')
+        
+        artifacts.append(artifact)
     
     return artifacts
 
@@ -584,6 +537,11 @@ def parse_artifacts(content):
 def health():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/version')
+def version():
+    """Get application version"""
+    return jsonify({'version': VERSION, 'timestamp': datetime.now().isoformat()})
 
 @app.route('/mcp/start', methods=['POST'])
 def start_mcp_server():

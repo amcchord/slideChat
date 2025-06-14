@@ -184,6 +184,13 @@ class ClaudeChatClient {
         const message = this.messageInput.value.trim();
         if (!message || this.currentEventSource) return;
         
+        // Check if API key is set before allowing chat
+        if (!this.slideApiKey || !this.apiKeyButton.classList.contains('has-key')) {
+            // Show API key modal if no key is set
+            this.openApiKeyModal();
+            return;
+        }
+        
         // Clear processed tool IDs for new conversation
         this.processedToolIds.clear();
         this.pendingAfterToolContent = null;
@@ -759,9 +766,19 @@ class ClaudeChatClient {
         if (hasKey) {
             this.apiKeyButton.classList.add('has-key');
             this.apiKeyStatus.textContent = 'API Key Set';
+            
+            // Enable chat input
+            this.messageInput.disabled = false;
+            this.sendButton.disabled = false;
+            this.messageInput.placeholder = 'Type your message to Slide...';
         } else {
             this.apiKeyButton.classList.remove('has-key');
             this.apiKeyStatus.textContent = 'No API Key';
+            
+            // Disable chat input
+            this.messageInput.disabled = true;
+            this.sendButton.disabled = true;
+            this.messageInput.placeholder = 'Enter your Slide API key to start chatting...';
         }
     }
     
@@ -988,6 +1005,10 @@ class ClaudeChatClient {
             }
         }
         
+        // Also remove any artifact tags from the chat content
+        // Artifacts are handled separately via the artifacts_update events
+        cleanContent = cleanContent.replace(/<artifact[^>]*>.*?<\/artifact>/gs, '[Artifact created]');
+        
         return { cleanContent };
     }
     
@@ -1027,14 +1048,17 @@ const additionalStyles = `
         line-height: 1.6;
     }
     
-    /* Rendered Markdown Styles with Neuton Font */
+    /* Rendered Markdown Styles with Charter Font */
     .artifact-markdown-rendered {
-        font-family: 'Neuton', serif;
+        font-family: 'Charter', 'Charter BT', 'Bitstream Charter', 'Sitka Text', 'Cambria', 'Georgia', 'Times New Roman', serif;
         padding: 24px 28px;
         line-height: 1.7;
         color: #2d3748;
         max-width: none;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        font-feature-settings: "liga" 1, "kern" 1;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
     }
     
     .artifact-markdown-rendered h1,
@@ -1043,7 +1067,7 @@ const additionalStyles = `
     .artifact-markdown-rendered h4,
     .artifact-markdown-rendered h5,
     .artifact-markdown-rendered h6 {
-        font-family: 'Neuton', serif;
+        font-family: 'Charter', 'Charter BT', 'Bitstream Charter', 'Sitka Text', 'Cambria', 'Georgia', 'Times New Roman', serif;
         font-weight: 700;
         margin-top: 0.2em;
         margin-bottom: 0.3em;
@@ -1053,21 +1077,19 @@ const additionalStyles = `
     
     .artifact-markdown-rendered h1 {
         font-size: 2.1rem;
-        border-bottom: 2px solid #e2e8f0;
         padding-bottom: 0.2rem;
         margin-top: 0;
-        margin-bottom: 0.2em;
+        margin-bottom: 0.3em;
     }
     
     .artifact-markdown-rendered h2 {
-        font-size: 1.75rem;
-        border-bottom: 1px solid #e2e8f0;
+        font-size: 1.5rem;
         padding-bottom: 0.1rem;
-        margin-bottom: 0.1em;
+        margin-bottom: 0.2em;
     }
     
     .artifact-markdown-rendered h3 {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
     }
     
     .artifact-markdown-rendered h4 {
@@ -1086,7 +1108,12 @@ const additionalStyles = `
     .artifact-markdown-rendered p {
         margin-bottom: 1.1em;
         font-size: 1.1rem;
-        font-weight: 300;
+        font-weight: 400;
+        vertical-align: baseline;
+        line-height: 1.7;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
     }
     
     .artifact-markdown-rendered blockquote {
@@ -1109,7 +1136,12 @@ const additionalStyles = `
     .artifact-markdown-rendered li {
         margin-bottom: 0.4rem;
         font-size: 1.1rem;
-        font-weight: 300;
+        font-weight: 400;
+        vertical-align: baseline;
+        line-height: 1.7;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
     }
     
     .artifact-markdown-rendered li > ul,
@@ -1221,6 +1253,15 @@ const additionalStyles = `
         list-style: none;
         margin-left: -2rem;
         padding-left: 2rem;
+    }
+    
+    /* Emoji alignment and sizing */
+    .artifact-markdown-rendered {
+        font-variant-emoji: text;
+    }
+    
+    .artifact-markdown-rendered * {
+        font-variant-emoji: text;
     }
     
     .artifact-text {
