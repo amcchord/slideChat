@@ -8,6 +8,15 @@ class ClaudeChatClient {
         this.processedToolIds = new Set(); // Track processed tool use blocks
         this.pendingAfterToolContent = null; // Track content to show after tool blocks
         
+        // Error handling and timeout properties
+        this.responseTimeout = 120000; // 120 seconds timeout
+        this.timeoutWarningDelay = 60000; // Show warning after 60 seconds
+        this.timeoutId = null;
+        this.warningTimeoutId = null;
+        this.currentAbortController = null;
+        this.lastResponseTime = null;
+        this.responseStartTime = null;
+        
         this.initializeElements();
         this.setupEventListeners();
         this.initializeTime();
@@ -292,6 +301,15 @@ class ClaudeChatClient {
     
     async streamWithFetch(message) {
         return new Promise((resolve, reject) => {
+            // Create abort controller for this request
+            this.currentAbortController = new AbortController();
+            const { signal } = this.currentAbortController;
+            
+            // Set up timeout handling
+            this.responseStartTime = Date.now();
+            this.lastResponseTime = Date.now();
+            this.setupTimeoutHandling(reject);
+            
             fetch('/chat', {
                 method: 'POST',
                 headers: {
@@ -300,7 +318,8 @@ class ClaudeChatClient {
                 body: JSON.stringify({
                     message: message,
                     session_id: this.sessionId
-                })
+                }),
+                signal: signal
             })
             .then(response => {
                 if (!response.ok) {
@@ -325,11 +344,16 @@ class ClaudeChatClient {
                 const processStream = () => {
                     reader.read().then(({ done, value }) => {
                         if (done) {
+                            this.cleanupTimeouts();
                             this.setInputEnabled(true);
                             this.setStatus('ready', 'Ready');
                             resolve();
                             return;
                         }
+                        
+                        // Reset timeout on each chunk received
+                        this.lastResponseTime = Date.now();
+                        this.resetTimeoutWarning();
                         
                         const chunk = decoder.decode(value, { stream: true });
                         currentBuffer += chunk;
@@ -374,8 +398,27 @@ class ClaudeChatClient {
                                         resolve();
                                         return;
                                         
+                                    } else if (data.type === 'hide_warning') {
+                                        this.hideTimeoutWarning();
+                                        
                                     } else if (data.type === 'error') {
                                         throw new Error(data.content);
+                                    } else if (data.type === 'timeout_error') {
+                                        const timeoutError = new Error(data.content);
+                                        timeoutError.name = 'TimeoutError';
+                                        throw timeoutError;
+                                    } else if (data.type === 'rate_limit_error') {
+                                        const rateLimitError = new Error(data.content);
+                                        rateLimitError.name = 'RateLimitError';
+                                        throw rateLimitError;
+                                    } else if (data.type === 'connection_error') {
+                                        const connectionError = new Error(data.content);
+                                        connectionError.name = 'ConnectionError';
+                                        throw connectionError;
+                                    } else if (data.type === 'stream_error') {
+                                        const streamError = new Error(data.content);
+                                        streamError.name = 'StreamError';
+                                        throw streamError;
                                     }
                                 } catch (e) {
                                     console.error('Error parsing stream data:', e);
@@ -446,12 +489,18 @@ class ClaudeChatClient {
                         }
                         
                         processStream();
-                    }).catch(reject);
+                    }).catch((error) => {
+                        this.cleanupTimeouts();
+                        reject(error);
+                    });
                 };
                 
                 processStream();
             })
-            .catch(reject);
+            .catch((error) => {
+                this.cleanupTimeouts();
+                reject(error);
+            });
         });
     }
     
@@ -567,6 +616,16 @@ class ClaudeChatClient {
                 </button>
             ` : '';
             
+            // Add permalink button if artifact is complete and has a permalink
+            const permalinkButton = (artifact.complete !== false && artifact.permalink) ? `
+                <button class="artifact-permalink-btn" onclick="window.open('${artifact.permalink}', '_blank')" title="Open in new tab">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                    </svg>
+                </button>
+            ` : '';
+            
             artifactDiv.innerHTML = `
                 <div class="artifact-item-header" ${!isNewest ? 'onclick="window.claudeChat.toggleArtifact(\'' + artifact.id + '\')"' : ''}>
                     <div class="artifact-header-left">
@@ -574,7 +633,10 @@ class ClaudeChatClient {
                         <span class="artifact-type">${typeLabel}</span>
                         ${buildingIndicator}
                     </div>
-                    ${collapseButton}
+                    <div class="artifact-header-right">
+                        ${permalinkButton}
+                        ${collapseButton}
+                    </div>
                 </div>
                 <div class="artifact-item-content">
                     ${this.renderArtifactContent(artifact)}
@@ -634,21 +696,279 @@ class ClaudeChatClient {
         this.renderArtifacts();
     }
     
+    // Timeout and error handling methods
+    setupTimeoutHandling(rejectCallback) {
+        // Set up warning timeout (show warning after 30 seconds)
+        this.warningTimeoutId = setTimeout(() => {
+            this.showTimeoutWarning();
+        }, this.timeoutWarningDelay);
+        
+        // Set up hard timeout (cancel after 120 seconds)
+        this.timeoutId = setTimeout(() => {
+            this.handleTimeout(rejectCallback);
+        }, this.responseTimeout);
+    }
+    
+    resetTimeoutWarning() {
+        // Clear and reset only the warning timeout when we receive data
+        if (this.warningTimeoutId) {
+            clearTimeout(this.warningTimeoutId);
+        }
+        
+        // Only reset warning if we haven't shown it yet
+        const elapsedTime = Date.now() - this.responseStartTime;
+        if (elapsedTime < this.timeoutWarningDelay) {
+            this.warningTimeoutId = setTimeout(() => {
+                this.showTimeoutWarning();
+            }, this.timeoutWarningDelay - elapsedTime);
+        }
+        
+        this.hideTimeoutWarning();
+    }
+    
+    cleanupTimeouts() {
+        if (this.timeoutId) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = null;
+        }
+        if (this.warningTimeoutId) {
+            clearTimeout(this.warningTimeoutId);
+            this.warningTimeoutId = null;
+        }
+        this.hideTimeoutWarning();
+        this.currentAbortController = null;
+    }
+    
+    showTimeoutWarning() {
+        const elapsedTime = Math.floor((Date.now() - this.responseStartTime) / 1000);
+        this.setStatus('thinking', `Claude is taking longer than usual... (${elapsedTime}s)`);
+        
+        // Add a timeout warning message to the chat
+        const existingWarning = document.querySelector('.timeout-warning');
+        if (!existingWarning) {
+            const warningDiv = document.createElement('div');
+            warningDiv.className = 'timeout-warning system-message';
+            warningDiv.innerHTML = `
+                <div class="warning-content">
+                    <div class="warning-icon">⚠️</div>
+                    <div class="warning-text">
+                        <strong>Claude is taking longer than usual to respond...</strong>
+                        <p>This might be due to a complex query or temporary network issues.</p>
+                        <button class="cancel-request-btn" onclick="chatClient.cancelCurrentRequest()">
+                            Cancel Request
+                        </button>
+                    </div>
+                </div>
+            `;
+            this.chatMessages.appendChild(warningDiv);
+            this.scrollToBottom();
+        }
+    }
+    
+    hideTimeoutWarning() {
+        const warningDiv = document.querySelector('.timeout-warning');
+        if (warningDiv) {
+            warningDiv.remove();
+        }
+    }
+    
+    handleTimeout(rejectCallback) {
+        console.error('Request timed out after', this.responseTimeout / 1000, 'seconds');
+        
+        // Cancel the request
+        if (this.currentAbortController) {
+            this.currentAbortController.abort();
+        }
+        
+        this.cleanupTimeouts();
+        
+        // Create a timeout error
+        const timeoutError = new Error('Claude stopped responding. The request has been cancelled due to timeout.');
+        timeoutError.name = 'TimeoutError';
+        
+        rejectCallback(timeoutError);
+    }
+    
+    cancelCurrentRequest() {
+        if (this.currentAbortController) {
+            console.log('User cancelled the request');
+            this.currentAbortController.abort();
+            this.cleanupTimeouts();
+            
+            // Remove typing indicator
+            const typingIndicator = document.querySelector('.typing-indicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
+            
+            // Add cancellation message
+            this.addMessage('assistant', 'Request was cancelled by user.');
+            this.setInputEnabled(true);
+            this.setStatus('ready', 'Ready');
+        }
+    }
+    
     handleError(error, typingIndicator = null) {
         console.error('Chat error:', error);
+        
+        // Clean up any ongoing operations
+        this.cleanupTimeouts();
         
         if (typingIndicator) {
             typingIndicator.remove();
         }
         
-        this.addMessage('assistant', `Sorry, I encountered an error: ${error.message}`);
+        // Provide specific error messages based on error type
+        let errorMessage;
+        let showRetryButton = false;
+        
+        if (error.name === 'TimeoutError') {
+            errorMessage = `
+                <div class="error-message timeout-error">
+                    <div class="error-icon">⏰</div>
+                    <div class="error-content">
+                        <strong>Request Timed Out</strong>
+                        <p>Claude stopped responding after 120 seconds. This might be due to:</p>
+                        <ul>
+                            <li>A very complex query requiring more processing time</li>
+                            <li>Temporary network connectivity issues</li>
+                            <li>High server load</li>
+                        </ul>
+                        <p>Please try rephrasing your question or breaking it into smaller parts.</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        } else if (error.name === 'AbortError') {
+            errorMessage = 'Request was cancelled.';
+        } else if (error.name === 'RateLimitError') {
+            errorMessage = `
+                <div class="error-message rate-limit-error">
+                    <div class="error-icon">🚫</div>
+                    <div class="error-content">
+                        <strong>Rate Limit Exceeded</strong>
+                        <p>${this.escapeHtml(error.message)}</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        } else if (error.name === 'ConnectionError') {
+            errorMessage = `
+                <div class="error-message network-error">
+                    <div class="error-icon">📡</div>
+                    <div class="error-content">
+                        <strong>Connection Error</strong>
+                        <p>${this.escapeHtml(error.message)}</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        } else if (error.name === 'StreamError') {
+            errorMessage = `
+                <div class="error-message timeout-error">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-content">
+                        <strong>Response Interrupted</strong>
+                        <p>${this.escapeHtml(error.message)}</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        } else if (error.message.includes('HTTP error')) {
+            const statusMatch = error.message.match(/status: (\d+)/);
+            const status = statusMatch ? statusMatch[1] : 'unknown';
+            
+            if (status === '429') {
+                errorMessage = `
+                    <div class="error-message rate-limit-error">
+                        <div class="error-icon">🚫</div>
+                        <div class="error-content">
+                            <strong>Rate Limit Exceeded</strong>
+                            <p>Too many requests have been sent. Please wait a moment before trying again.</p>
+                        </div>
+                    </div>
+                `;
+            } else if (status === '503') {
+                errorMessage = `
+                    <div class="error-message service-error">
+                        <div class="error-icon">🔧</div>
+                        <div class="error-content">
+                            <strong>Service Temporarily Unavailable</strong>
+                            <p>Claude's servers are currently experiencing high demand. Please try again in a few moments.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                errorMessage = `
+                    <div class="error-message http-error">
+                        <div class="error-icon">🌐</div>
+                        <div class="error-content">
+                            <strong>Connection Error (${status})</strong>
+                            <p>There was a problem connecting to Claude. Please check your internet connection and try again.</p>
+                        </div>
+                    </div>
+                `;
+            }
+            showRetryButton = true;
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            errorMessage = `
+                <div class="error-message network-error">
+                    <div class="error-icon">📡</div>
+                    <div class="error-content">
+                        <strong>Network Connection Error</strong>
+                        <p>Unable to connect to the server. Please check your internet connection and try again.</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        } else {
+            // Generic error
+            errorMessage = `
+                <div class="error-message generic-error">
+                    <div class="error-icon">❌</div>
+                    <div class="error-content">
+                        <strong>Unexpected Error</strong>
+                        <p>${this.escapeHtml(error.message)}</p>
+                        <p>If this problem persists, please try refreshing the page.</p>
+                    </div>
+                </div>
+            `;
+            showRetryButton = true;
+        }
+        
+        // Add retry button if appropriate
+        if (showRetryButton) {
+            errorMessage += `
+                <div class="error-actions">
+                    <button class="retry-btn" onclick="chatClient.retryLastMessage()">
+                        🔄 Retry Last Message
+                    </button>
+                </div>
+            `;
+        }
+        
+        this.addMessage('assistant', errorMessage);
         this.setInputEnabled(true);
         this.setStatus('error', 'Error occurred');
         
         // Reset status after a few seconds
         setTimeout(() => {
             this.setStatus('ready', 'Ready');
-        }, 3000);
+        }, 5000);
+    }
+    
+    retryLastMessage() {
+        // Get the last user message from chat history
+        const messages = this.chatMessages.querySelectorAll('.user-message');
+        if (messages.length > 0) {
+            const lastUserMessage = messages[messages.length - 1];
+            const messageContent = lastUserMessage.querySelector('.message-content');
+            if (messageContent) {
+                const lastMessage = messageContent.textContent.trim();
+                this.messageInput.value = lastMessage;
+                this.sendMessage();
+            }
+        }
     }
     
     scrollToBottom() {
@@ -1134,6 +1454,190 @@ const additionalStyles = `
     }
     
     .artifact-markdown-rendered li {
+        margin-bottom: 0.5rem;
+        line-height: 1.6;
+        font-size: 1.05rem;
+    }
+    
+    /* Error handling and timeout warning styles */
+    .timeout-warning {
+        background: linear-gradient(135deg, #fff3cd, #ffeeba);
+        border: 1px solid #ffc107;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 16px 0;
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    .warning-content {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .warning-icon {
+        font-size: 1.5rem;
+        margin-top: 2px;
+    }
+    
+    .warning-text {
+        flex: 1;
+    }
+    
+    .warning-text strong {
+        color: #856404;
+        font-size: 1.1rem;
+        display: block;
+        margin-bottom: 8px;
+    }
+    
+    .warning-text p {
+        color: #856404;
+        margin: 0 0 12px 0;
+        font-size: 0.95rem;
+    }
+    
+    .cancel-request-btn {
+        background: #dc3545;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: background-color 0.2s;
+    }
+    
+    .cancel-request-btn:hover {
+        background: #c82333;
+    }
+    
+    .error-message {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px 0;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    
+    .error-message.timeout-error {
+        background: linear-gradient(135deg, #fff3cd, #ffeeba);
+        border-color: #ffc107;
+    }
+    
+    .error-message.rate-limit-error {
+        background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+        border-color: #dc3545;
+    }
+    
+    .error-message.service-error {
+        background: linear-gradient(135deg, #d1ecf1, #bee5eb);
+        border-color: #17a2b8;
+    }
+    
+    .error-message.network-error {
+        background: linear-gradient(135deg, #e2e3e5, #d6d8db);
+        border-color: #6c757d;
+    }
+    
+    .error-message.generic-error {
+        background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+        border-color: #dc3545;
+    }
+    
+    .error-icon {
+        font-size: 1.5rem;
+        margin-top: 2px;
+    }
+    
+    .error-content {
+        flex: 1;
+    }
+    
+    .error-content strong {
+        font-size: 1.1rem;
+        display: block;
+        margin-bottom: 8px;
+        color: #212529;
+    }
+    
+    .error-content p {
+        margin: 0 0 8px 0;
+        color: #6c757d;
+        font-size: 0.95rem;
+        line-height: 1.4;
+    }
+    
+    .error-content ul {
+        margin: 8px 0;
+        padding-left: 20px;
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+    
+    .error-content li {
+        margin-bottom: 4px;
+        line-height: 1.4;
+    }
+    
+    .error-actions {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(0, 0, 0, 0.1);
+    }
+    
+    .retry-btn {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: background-color 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .retry-btn:hover {
+        background: #0056b3;
+    }
+    
+    .system-message {
+        margin: 12px 0;
+        padding: 0;
+        background: none;
+        border: none;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    /* Enhanced status indicator styles */
+    .status-dot.status-thinking {
+        animation: pulse 2s infinite, colorShift 3s infinite;
+    }
+    
+    @keyframes colorShift {
+        0%, 100% { background-color: #f59e0b; }
+        50% { background-color: #fb923c; }
+    }
+    
+    .artifact-markdown-rendered li {
         margin-bottom: 0.4rem;
         font-size: 1.1rem;
         font-weight: 400;
@@ -1215,6 +1719,7 @@ const additionalStyles = `
     }
     
     .artifact-markdown-rendered img {
+        width: 160px;
         max-width: 100%;
         height: auto;
         border-radius: 6px;
@@ -1351,5 +1856,6 @@ document.head.appendChild(styleSheet);
 
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.claudeChat = new ClaudeChatClient();
+    window.chatClient = new ClaudeChatClient();
+    window.claudeChat = window.chatClient; // Backward compatibility
 }); 

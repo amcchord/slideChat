@@ -2,7 +2,7 @@
 
 A powerful chat application that integrates with Slide backup and disaster recovery systems, powered by Claude AI and built with Flask.
 
-![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 

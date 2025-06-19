@@ -1,9 +1,8 @@
 import os
 import json
 import logging
-import uuid
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, Response, stream_template, send_from_directory
+from flask import Flask, render_template, request, jsonify, Response, stream_template
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import re
@@ -11,7 +10,14 @@ import httpx
 from mcp_manager import mcp_manager
 
 # Application version
-VERSION = "1.1.0"
+VERSION = "1.0.2"
+
+# Claude model configuration
+CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+MAX_TOKENS = 32768
+CONTEXT_WINDOW = 200000  # Approximate context window for Claude Sonnet 4
+CONTEXT_WARNING_THRESHOLD = 0.8  # Warn when 80% of context is used
+CONTEXT_TRUNCATE_THRESHOLD = 0.9  # Truncate when 90% of context is used
 
 # Load environment variables
 load_dotenv()
@@ -19,189 +25,6 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Create logs directory if it doesn't exist
-LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-# Create artifacts directory if it doesn't exist
-ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'artifacts')
-os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-
-# Enhanced logging setup for API interactions
-def setup_detailed_logging():
-    """Setup detailed logging for API interactions and debugging"""
-    # Create a separate logger for API interactions
-    api_logger = logging.getLogger('api_interactions')
-    api_logger.setLevel(logging.DEBUG)
-    
-    # Create file handler for API logs
-    api_log_file = os.path.join(LOGS_DIR, f'api_interactions_{datetime.now().strftime("%Y%m%d")}.log')
-    api_handler = logging.FileHandler(api_log_file)
-    api_handler.setLevel(logging.DEBUG)
-    
-    # Create file handler for session logs
-    session_log_file = os.path.join(LOGS_DIR, f'sessions_{datetime.now().strftime("%Y%m%d")}.log')
-    session_handler = logging.FileHandler(session_log_file)
-    session_handler.setLevel(logging.INFO)
-    
-    # Create detailed formatter
-    detailed_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    api_handler.setFormatter(detailed_formatter)
-    session_handler.setFormatter(detailed_formatter)
-    
-    # Add handlers to loggers
-    api_logger.addHandler(api_handler)
-    api_logger.propagate = False  # Don't propagate to root logger
-    
-    session_logger = logging.getLogger('sessions')
-    session_logger.addHandler(session_handler)
-    session_logger.setLevel(logging.INFO)
-    session_logger.propagate = False
-    
-    return api_logger, session_logger
-
-# Initialize detailed loggers
-api_logger, session_logger = setup_detailed_logging()
-
-def log_session_interaction(session_id, event_type, data, error=None):
-    """Log session interactions for debugging"""
-    log_entry = {
-        'timestamp': datetime.now().isoformat(),
-        'session_id': session_id,
-        'event_type': event_type,
-        'data': data,
-        'error': str(error) if error else None
-    }
-    
-    if error:
-        session_logger.error(f"SESSION_ERROR: {json.dumps(log_entry, indent=2)}")
-    else:
-        session_logger.info(f"SESSION_EVENT: {json.dumps(log_entry, indent=2)}")
-
-def log_api_interaction(session_id, event_type, payload=None, response_data=None, error=None):
-    """Log API interactions for debugging"""
-    log_entry = {
-        'timestamp': datetime.now().isoformat(),
-        'session_id': session_id,
-        'event_type': event_type,
-        'payload': payload,
-        'response_data': response_data,
-        'error': str(error) if error else None
-    }
-    
-    if error:
-        api_logger.error(f"API_ERROR: {json.dumps(log_entry, indent=2)}")
-    else:
-        api_logger.info(f"API_EVENT: {json.dumps(log_entry, indent=2)}")
-
-def save_session_debug_log(session_id, messages, response_content, error=None, user_agent=None, ip_address=None):
-    """Save a complete session debug log to a separate file"""
-    debug_log_file = os.path.join(LOGS_DIR, f'session_debug_{session_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
-    
-    debug_data = {
-        'session_id': session_id,
-        'timestamp': datetime.now().isoformat(),
-        'messages': messages,
-        'response_content': response_content,
-        'error': str(error) if error else None,
-        'metadata': {
-            'user_agent': user_agent or 'Unknown',
-            'ip_address': ip_address or 'Unknown',
-            'content_length': len(response_content) if response_content else 0
-        }
-    }
-    
-    try:
-        with open(debug_log_file, 'w', encoding='utf-8') as f:
-            json.dump(debug_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Debug log saved: {debug_log_file}")
-    except Exception as e:
-        logger.error(f"Failed to save debug log: {e}")
-
-def save_artifact_to_file(artifact):
-    """Save a completed artifact to the artifacts directory and return the permalink"""
-    try:
-        # Generate unique filename using timestamp and random ID
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        
-        # Determine file extension based on artifact type
-        extensions = {
-            'html': '.html',
-            'code': '.txt',
-            'markdown': '.md',
-            'text': '.txt'
-        }
-        
-        # Get extension, default to .txt
-        extension = extensions.get(artifact.get('type', 'text'), '.txt')
-        
-        # For code artifacts, try to use language-specific extension
-        if artifact.get('type') == 'code' and artifact.get('language'):
-            lang_extensions = {
-                'python': '.py',
-                'javascript': '.js',
-                'typescript': '.ts',
-                'html': '.html',
-                'css': '.css',
-                'json': '.json',
-                'xml': '.xml',
-                'yaml': '.yml',
-                'sql': '.sql',
-                'java': '.java',
-                'cpp': '.cpp',
-                'c': '.c',
-                'go': '.go',
-                'rust': '.rs',
-                'php': '.php',
-                'ruby': '.rb',
-                'bash': '.sh',
-                'shell': '.sh'
-            }
-            extension = lang_extensions.get(artifact.get('language', '').lower(), '.txt')
-        
-        # Create safe filename from title
-        safe_title = re.sub(r'[^a-zA-Z0-9_\-\s]', '', artifact.get('title', 'Untitled'))
-        safe_title = re.sub(r'\s+', '_', safe_title.strip())[:50]  # Limit length
-        
-        filename = f"{timestamp}_{safe_title}_{unique_id}{extension}"
-        filepath = os.path.join(ARTIFACTS_DIR, filename)
-        
-        # Create metadata
-        metadata = {
-            'id': artifact.get('id'),
-            'title': artifact.get('title', 'Untitled'),
-            'type': artifact.get('type', 'text'),
-            'language': artifact.get('language'),
-            'created_at': datetime.now().isoformat(),
-            'filename': filename
-        }
-        
-        # Save the artifact content
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(artifact.get('content', ''))
-        
-        # Save metadata file
-        metadata_filename = f"{timestamp}_{safe_title}_{unique_id}.meta.json"
-        metadata_filepath = os.path.join(ARTIFACTS_DIR, metadata_filename)
-        
-        with open(metadata_filepath, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
-        # Return permalink path
-        permalink = f"/artifacts/{filename}"
-        
-        logger.info(f"Artifact saved: {filepath}")
-        return permalink
-        
-    except Exception as e:
-        logger.error(f"Failed to save artifact: {e}")
-        return None
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -216,17 +39,85 @@ claude_client = None  # Initialize lazily to avoid startup issues
 # Global variables for session management
 chat_sessions = {}
 
-def stream_claude_response(messages, session_id=None):
+def estimate_tokens(text):
+    """
+    Estimate token count for text using a simple heuristic.
+    This is a rough approximation - actual tokenization may vary.
+    """
+    if not text:
+        return 0
+    
+    # Simple estimation: ~4 characters per token for English text
+    # Add some padding for special tokens and formatting
+    char_count = len(str(text))
+    estimated_tokens = max(1, int(char_count / 3.5))  # Slightly conservative estimate
+    
+    return estimated_tokens
+
+def calculate_session_tokens(session_messages, system_message=""):
+    """Calculate total tokens used in a chat session"""
+    total_tokens = 0
+    
+    # Add system message tokens
+    if system_message:
+        total_tokens += estimate_tokens(system_message)
+    
+    # Add conversation tokens
+    for message in session_messages:
+        content = message.get('content', '')
+        total_tokens += estimate_tokens(content)
+        # Add small overhead for message structure
+        total_tokens += 10
+    
+    return total_tokens
+
+def truncate_conversation_if_needed(session_messages, system_message=""):
+    """
+    Truncate conversation history if approaching context limit.
+    Keeps the most recent messages and preserves the conversation flow.
+    """
+    total_tokens = calculate_session_tokens(session_messages, system_message)
+    
+    if total_tokens <= CONTEXT_WINDOW * CONTEXT_TRUNCATE_THRESHOLD:
+        return session_messages, False  # No truncation needed
+    
+    # Keep first message (if it's a user message) and most recent messages
+    if not session_messages:
+        return session_messages, False
+    
+    # Always keep the last few messages to maintain context
+    min_messages_to_keep = 4
+    truncated_messages = []
+    
+    # Try to keep a reasonable conversation tail
+    messages_to_check = session_messages[-20:]  # Check last 20 messages
+    current_tokens = estimate_tokens(system_message)
+    
+    # Work backwards from the most recent messages
+    for message in reversed(messages_to_check):
+        message_tokens = estimate_tokens(message.get('content', '')) + 10
+        if current_tokens + message_tokens < CONTEXT_WINDOW * CONTEXT_TRUNCATE_THRESHOLD:
+            truncated_messages.insert(0, message)
+            current_tokens += message_tokens
+        else:
+            break
+    
+    # Ensure we have at least a few messages
+    if len(truncated_messages) < min_messages_to_keep and len(session_messages) >= min_messages_to_keep:
+        truncated_messages = session_messages[-min_messages_to_keep:]
+    
+    logger.info(f"Truncated conversation from {len(session_messages)} to {len(truncated_messages)} messages")
+    logger.info(f"Token count reduced from ~{total_tokens} to ~{calculate_session_tokens(truncated_messages, system_message)}")
+    
+    return truncated_messages, True  # Truncation occurred
+
+def stream_claude_response(messages):
     """Direct HTTP streaming to Claude API with proper MCP tool integration"""
     headers = {
         'Content-Type': 'application/json',
         'X-API-Key': CLAUDE_API_KEY,
         'anthropic-version': '2023-06-01'
     }
-    
-    # Log the start of API interaction
-    if session_id:
-        log_api_interaction(session_id, 'request_start', {'message_count': len(messages)})
     
     # Prepare system message with Slide device information
     system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
@@ -239,15 +130,15 @@ You have access to Slide MCP tools that allow you to:
 - Control virtualization and recovery operations
 
 The Hierachy of the Slide system is: Clients have Devices which have Agents that take of Backups that become Snapshots.
-When doing a restore we start with a Snapshot. When reffering to an agent users tend to preffer either use the display name if they have given one or the hostname.
+When doing a restore we start with a Snapshot.
+
 
 When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean.
 
 Users like reports and data presented as a markdown artifact that uses tables and emoji.
 
 
-IMPORTANT: When creating markdown you should always do it as a markdown artifact. We support GitHub Flavored Markdown which means images can be embedded. 
-IMPORTANT: When working with screenshots images the users are expecting them to used at thumbnail to icon sizes (not larger than 200px wide). Please make sure you set their size in the markdown.
+IMPORTANT: When creating markdown you should always do it as a markdown artifact.
 
 IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wrap them in <artifact> tags like this:
 
@@ -289,8 +180,8 @@ The artifact tags help the interface properly display and manage your creations.
     
     while True:
         payload = {
-            'model': 'claude-sonnet-4-20250514',
-            'max_tokens': 16000,
+            'model': CLAUDE_MODEL,
+            'max_tokens': MAX_TOKENS,
             'system': system_message,
             'messages': conversation_messages,
             'stream': True
@@ -300,31 +191,6 @@ The artifact tags help the interface properly display and manage your creations.
         if tools:
             payload['tools'] = tools
         
-        # Log the API request payload (excluding sensitive data)
-        if session_id:
-            safe_payload = payload.copy()
-            if 'messages' in safe_payload:
-                safe_messages = []
-                for msg in safe_payload['messages']:
-                    safe_msg = {'role': msg['role']}
-                    content = msg['content']
-                    
-                    # Handle different content types (string, list, etc.)
-                    if isinstance(content, str):
-                        # String content - truncate if too long
-                        safe_msg['content'] = content[:200] + '...' if len(content) > 200 else content
-                    elif isinstance(content, list):
-                        # List content (tool results, etc.) - summarize
-                        safe_msg['content'] = f"[List with {len(content)} items: {str(content)[:100]}...]"
-                    else:
-                        # Other types - convert to string and truncate
-                        content_str = str(content)
-                        safe_msg['content'] = content_str[:200] + '...' if len(content_str) > 200 else content_str
-                    
-                    safe_messages.append(safe_msg)
-                safe_payload['messages'] = safe_messages
-            log_api_interaction(session_id, 'api_request', safe_payload)
-        
         try:
             import requests
             response = requests.post(
@@ -332,24 +198,17 @@ The artifact tags help the interface properly display and manage your creations.
                 json=payload,
                 headers=headers,
                 stream=True,
-                timeout=(10, 120)  # (connection timeout, read timeout)
+                timeout=60
             )
             
             if response.status_code != 200:
-                error_msg = f"API error: {response.status_code} - {response.text}"
-                if session_id:
-                    log_api_interaction(session_id, 'api_error', response_data={'status_code': response.status_code, 'error': response.text})
-                raise Exception(error_msg)
+                raise Exception(f"API error: {response.status_code} - {response.text}")
             
             # Collect the full response to check for tool use
             full_response = ""
             tool_uses = []
             current_tool_use = None
             current_input_json = ""
-            response_chunks = []  # For logging
-            
-            if session_id:
-                log_api_interaction(session_id, 'streaming_start', response_data={'status_code': response.status_code})
             
             for line in response.iter_lines(decode_unicode=True):
                 if line and line.startswith('data: '):
@@ -378,15 +237,6 @@ The artifact tags help the interface properly display and manage your creations.
                                 # Regular text content - stream it
                                 text = delta.get('text', '')
                                 full_response += text
-                                
-                                # Log chunk for debugging
-                                if session_id:
-                                    response_chunks.append({
-                                        'timestamp': datetime.now().isoformat(),
-                                        'type': 'text_delta',
-                                        'content': text[:100] + '...' if len(text) > 100 else text
-                                    })
-                                
                                 yield text
                                 
                             elif delta.get('type') == 'input_json_delta' and current_tool_use:
@@ -490,43 +340,10 @@ The artifact tags help the interface properly display and manage your creations.
                 continue
             else:
                 # No tool use, we're done
-                if session_id:
-                    log_api_interaction(session_id, 'streaming_complete', response_data={
-                        'response_length': len(full_response),
-                        'chunks_received': len(response_chunks),
-                        'tool_uses': len(tool_uses)
-                    })
                 break
                     
-        except requests.exceptions.Timeout as e:
-            error_msg = "Claude API request timed out. This may be due to high server load or a complex query. Please try again with a simpler request."
-            logger.error(f"Claude API timeout: {e}")
-            if session_id:
-                log_api_interaction(session_id, 'timeout_error', error=e)
-            raise Exception(error_msg)
-        except requests.exceptions.ConnectionError as e:
-            error_msg = "Unable to connect to Claude API. Please check your internet connection and try again."
-            logger.error(f"Claude API connection error: {e}")
-            if session_id:
-                log_api_interaction(session_id, 'connection_error', error=e)
-            raise Exception(error_msg)
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"Claude API HTTP error: {e}")
-            if session_id:
-                log_api_interaction(session_id, 'http_error', response_data={'status_code': e.response.status_code}, error=e)
-            if e.response.status_code == 429:
-                raise Exception("Rate limit exceeded. Please wait a moment before sending another message.")
-            elif e.response.status_code == 503:
-                raise Exception("Claude API is currently experiencing high demand. Please try again in a few moments.")
-            else:
-                raise Exception(f"Claude API error (HTTP {e.response.status_code}). Please try again.")
         except Exception as e:
             logger.error(f"Direct API call failed: {e}")
-            if session_id:
-                log_api_interaction(session_id, 'general_error', error=e)
-            # Check if it's a stream-related error
-            if "stream" in str(e).lower() or "incomplete" in str(e).lower():
-                raise Exception("Claude stopped responding mid-stream. This may be due to a complex query or network issues. Please try rephrasing your question or breaking it into smaller parts.")
             raise
 
 def get_claude_client():
@@ -549,17 +366,9 @@ def chat():
         if not message:
             return jsonify({'error': 'Message is required'}), 400
         
-        # Log session start
-        log_session_interaction(session_id, 'message_received', {
-            'message_length': len(message),
-            'user_agent': request.headers.get('User-Agent', 'Unknown'),
-            'ip_address': request.remote_addr
-        })
-        
         # Initialize or get existing session
         if session_id not in chat_sessions:
             chat_sessions[session_id] = []
-            log_session_interaction(session_id, 'session_created', {'session_id': session_id})
         
         # Add user message to session
         chat_sessions[session_id].append({
@@ -568,22 +377,73 @@ def chat():
             'timestamp': datetime.now().isoformat()
         })
         
-        log_session_interaction(session_id, 'user_message_added', {
-            'message_count': len(chat_sessions[session_id]),
-            'message_preview': message[:100] + '...' if len(message) > 100 else message
-        })
+        # Check and truncate conversation if needed
+        system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+
+Slide is a backup provider that sells on-premises BCDR (Business Continuity and Disaster Recovery) devices that back up local servers and create copies in the cloud. Slide can virtualize failed servers both locally and in the cloud.
+
+You have access to Slide MCP tools that allow you to:
+- Monitor and manage Slide backup devices
+- Check backup status and schedules  
+- Control virtualization and recovery operations
+
+The Hierachy of the Slide system is: Clients have Devices which have Agents that take of Backups that become Snapshots.
+When doing a restore we start with a Snapshot.
+
+
+When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean.
+
+Users like reports and data presented as a markdown artifact that uses tables and emoji.
+
+
+IMPORTANT: When creating markdown you should always do it as a markdown artifact.
+
+IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wrap them in <artifact> tags like this:
+
+<artifact type="markdown" title="Report Title">
+# Your markdown content here
+</artifact>
+
+<artifact type="html" title="Web Page">
+<!DOCTYPE html>
+<html>...</html>
+</artifact>
+
+<artifact type="code" language="python" title="Python Script">
+def hello_world():
+    print("Hello, World!")
+</artifact>
+
+Use these artifact tags for ANY substantial content that could be rendered separately from your explanation, including:
+- Markdown reports and documents
+- HTML pages and components  
+- Code in any programming language
+- JSON data structures
+- XML files
+- Any other structured content
+
+The artifact tags help the interface properly display and manage your creations.
+
+"""
         
-        # Capture request context data before entering generator
-        user_agent = request.headers.get('User-Agent', 'Unknown')
-        ip_address = request.remote_addr
+        truncated_messages, was_truncated = truncate_conversation_if_needed(
+            chat_sessions[session_id], system_message
+        )
+        
+        if was_truncated:
+            # Update session with truncated messages
+            chat_sessions[session_id] = truncated_messages
+            logger.info(f"Session {session_id} conversation was truncated due to context limits")
         
         # Generate streaming response
         def generate_response():
-            messages = []  # Initialize outside try block for error handling
-            response_content = ""  # Initialize outside try block for error handling
-            
             try:
+                # Send truncation notice if conversation was truncated
+                if was_truncated:
+                    yield f"data: {json.dumps({'type': 'text', 'content': '⚠️ *Note: Some older conversation history was removed to stay within context limits.*\\n\\n'})}\n\n"
+                
                 # Prepare messages for Claude API
+                messages = []
                 for msg in chat_sessions[session_id]:
                     if msg['role'] in ['user', 'assistant']:
                         messages.append({
@@ -592,11 +452,12 @@ def chat():
                         })
                 
                 # Stream response from Claude using direct API with real-time artifact detection
+                response_content = ""
                 current_artifacts = {}  # Track ongoing artifacts by their start position
                 chat_content = ""  # Content to show in chat (excluding artifacts)
                 inside_artifact = False  # Track if we're currently inside an artifact
                 
-                for text_chunk in stream_claude_response(messages, session_id):
+                for text_chunk in stream_claude_response(messages):
                     response_content += text_chunk
                     
                     # Check for artifacts in the current content and stream them
@@ -622,12 +483,6 @@ def chat():
                         content = artifact_data.get('content', '').strip()
                         if len(content) > 10:  # Only keep artifacts with substantial content
                             artifact_data['complete'] = True
-                            
-                            # Save artifact to file and get permalink
-                            permalink = save_artifact_to_file(artifact_data)
-                            if permalink:
-                                artifact_data['permalink'] = permalink
-                            
                             final_artifacts_update.append(artifact_data)
                         else:
                             # Mark empty artifacts for removal
@@ -645,58 +500,18 @@ def chat():
                     yield f"data: {json.dumps({'type': 'artifacts_remove', 'content': artifacts_to_remove})}\n\n"
                 
                 # Add assistant response to session (use chat content without artifacts)
-                assistant_content = chat_content if chat_content.strip() else "Created an artifact for you."
                 chat_sessions[session_id].append({
                     'role': 'assistant',
-                    'content': assistant_content,
+                    'content': chat_content if chat_content.strip() else "Created an artifact for you.",
                     'timestamp': datetime.now().isoformat()
                 })
-                
-                # Log successful completion
-                log_session_interaction(session_id, 'response_completed', {
-                    'response_length': len(response_content),
-                    'chat_content_length': len(assistant_content),
-                    'artifacts_count': len(current_artifacts)
-                })
-                
-                # Save debug log for this session
-                save_session_debug_log(session_id, messages, response_content, user_agent=user_agent, ip_address=ip_address)
                 
                 # Send completion signal
                 yield f"data: {json.dumps({'type': 'complete'})}\n\n"
                 
             except Exception as e:
                 logger.error(f"Error in generate_response: {str(e)}")
-                
-                # Log the error
-                log_session_interaction(session_id, 'response_error', {
-                    'error_type': type(e).__name__,
-                    'error_message': str(e)
-                }, error=e)
-                
-                # Save debug log for this failed session
-                try:
-                    save_session_debug_log(session_id, messages, response_content, error=e, user_agent=user_agent, ip_address=ip_address)
-                except Exception as log_error:
-                    logger.error(f"Failed to save error debug log: {log_error}")
-                
-                # Remove any timeout warning that might be showing
-                yield f"data: {json.dumps({'type': 'hide_warning'})}\n\n"
-                
-                # Provide specific error handling based on error type
-                error_message = str(e)
-                error_type = 'error'
-                
-                if 'timeout' in error_message.lower():
-                    error_type = 'timeout_error'
-                elif 'rate limit' in error_message.lower():
-                    error_type = 'rate_limit_error'
-                elif 'connection' in error_message.lower():
-                    error_type = 'connection_error'
-                elif 'stopped responding' in error_message.lower():
-                    error_type = 'stream_error'
-                
-                yield f"data: {json.dumps({'type': error_type, 'content': error_message})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
         
         return Response(
             generate_response(),
@@ -709,14 +524,6 @@ def chat():
         
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
-        
-        # Log the endpoint error
-        session_id = data.get('session_id', 'unknown') if 'data' in locals() else 'unknown'
-        log_session_interaction(session_id, 'endpoint_error', {
-            'error_type': type(e).__name__,
-            'error_message': str(e)
-        }, error=e)
-        
         return jsonify({'error': str(e)}), 500
 
 def filter_chat_content(text_chunk, inside_artifact):
@@ -881,14 +688,6 @@ def version():
     """Get application version"""
     return jsonify({'version': VERSION, 'timestamp': datetime.now().isoformat()})
 
-@app.route('/artifacts/<filename>')
-def serve_artifact(filename):
-    """Serve saved artifacts from the artifacts directory"""
-    try:
-        return send_from_directory(ARTIFACTS_DIR, filename)
-    except FileNotFoundError:
-        return jsonify({'error': 'Artifact not found'}), 404
-
 @app.route('/mcp/start', methods=['POST'])
 def start_mcp_server():
     """Start the MCP server with the provided API key"""
@@ -941,111 +740,96 @@ def mcp_server_status():
         logger.error(f"Error getting MCP server status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/logs/status')
-def logs_status():
-    """Get logging status and available log files"""
+@app.route('/context/status')
+def context_status():
+    """Get context window usage for all sessions"""
     try:
-        log_files = []
-        if os.path.exists(LOGS_DIR):
-            for filename in os.listdir(LOGS_DIR):
-                if filename.endswith('.log') or filename.endswith('.json'):
-                    filepath = os.path.join(LOGS_DIR, filename)
-                    file_size = os.path.getsize(filepath)
-                    modified_time = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
-                    log_files.append({
-                        'filename': filename,
-                        'size_bytes': file_size,
-                        'size_mb': round(file_size / (1024 * 1024), 2),
-                        'modified': modified_time
-                    })
-        
-        return jsonify({
-            'logs_directory': LOGS_DIR,
-            'log_files': sorted(log_files, key=lambda x: x['modified'], reverse=True),
-            'total_files': len(log_files),
-            'total_size_mb': round(sum(f['size_bytes'] for f in log_files) / (1024 * 1024), 2)
-        })
-    except Exception as e:
-        logger.error(f"Error getting logs status: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        session_id = request.args.get('session_id', 'default')
+        system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
 
-@app.route('/logs/recent/<log_type>')
-def get_recent_logs(log_type):
-    """Get recent log entries for debugging"""
-    try:
-        lines_limit = request.args.get('lines', 50, type=int)
-        today = datetime.now().strftime("%Y%m%d")
-        
-        if log_type == 'sessions':
-            log_file = os.path.join(LOGS_DIR, f'sessions_{today}.log')
-        elif log_type == 'api':
-            log_file = os.path.join(LOGS_DIR, f'api_interactions_{today}.log')
-        else:
-            return jsonify({'error': 'Invalid log type. Use "sessions" or "api"'}), 400
-        
-        if not os.path.exists(log_file):
-            return jsonify({
-                'log_type': log_type,
-                'log_file': log_file,
-                'entries': [],
-                'message': 'Log file does not exist yet'
-            })
-        
-        # Read the last N lines from the log file
-        with open(log_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            recent_lines = lines[-lines_limit:] if len(lines) > lines_limit else lines
-        
-        return jsonify({
-            'log_type': log_type,
-            'log_file': log_file,
-            'entries': [line.strip() for line in recent_lines if line.strip()],
-            'total_lines': len(lines),
-            'showing_lines': len(recent_lines)
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting recent logs: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+Slide is a backup provider that sells on-premises BCDR (Business Continuity and Disaster Recovery) devices that back up local servers and create copies in the cloud. Slide can virtualize failed servers both locally and in the cloud.
 
-@app.route('/logs/debug/<session_id>')
-def get_session_debug(session_id):
-    """Get debug logs for a specific session"""
-    try:
-        debug_files = []
-        if os.path.exists(LOGS_DIR):
-            for filename in os.listdir(LOGS_DIR):
-                if filename.startswith(f'session_debug_{session_id}') and filename.endswith('.json'):
-                    filepath = os.path.join(LOGS_DIR, filename)
-                    modified_time = datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
-                    debug_files.append({
-                        'filename': filename,
-                        'modified': modified_time,
-                        'filepath': filepath
-                    })
+You have access to Slide MCP tools that allow you to:
+- Monitor and manage Slide backup devices
+- Check backup status and schedules  
+- Control virtualization and recovery operations
+
+The Hierachy of the Slide system is: Clients have Devices which have Agents that take of Backups that become Snapshots.
+When doing a restore we start with a Snapshot.
+
+
+When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean.
+
+Users like reports and data presented as a markdown artifact that uses tables and emoji.
+
+
+IMPORTANT: When creating markdown you should always do it as a markdown artifact.
+
+IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wrap them in <artifact> tags like this:
+
+<artifact type="markdown" title="Report Title">
+# Your markdown content here
+</artifact>
+
+<artifact type="html" title="Web Page">
+<!DOCTYPE html>
+<html>...</html>
+</artifact>
+
+<artifact type="code" language="python" title="Python Script">
+def hello_world():
+    print("Hello, World!")
+</artifact>
+
+Use these artifact tags for ANY substantial content that could be rendered separately from your explanation, including:
+- Markdown reports and documents
+- HTML pages and components  
+- Code in any programming language
+- JSON data structures
+- XML files
+- Any other structured content
+
+The artifact tags help the interface properly display and manage your creations.
+
+"""
         
-        debug_files.sort(key=lambda x: x['modified'], reverse=True)
-        
-        # If we have debug files, return the most recent one's content
-        if debug_files:
-            latest_file = debug_files[0]['filepath']
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                debug_data = json.load(f)
-            
+        if session_id not in chat_sessions:
             return jsonify({
                 'session_id': session_id,
-                'debug_files': debug_files,
-                'latest_debug_data': debug_data
-            })
-        else:
-            return jsonify({
-                'session_id': session_id,
-                'debug_files': [],
-                'message': 'No debug files found for this session'
+                'tokens_used': 0,
+                'tokens_limit': CONTEXT_WINDOW,
+                'usage_percentage': 0,
+                'message_count': 0,
+                'warning_threshold': CONTEXT_WARNING_THRESHOLD,
+                'truncate_threshold': CONTEXT_TRUNCATE_THRESHOLD,
+                'status': 'empty'
             })
         
+        session_messages = chat_sessions[session_id]
+        tokens_used = calculate_session_tokens(session_messages, system_message)
+        usage_percentage = tokens_used / CONTEXT_WINDOW
+        
+        # Determine status
+        if usage_percentage >= CONTEXT_TRUNCATE_THRESHOLD:
+            status = 'critical'
+        elif usage_percentage >= CONTEXT_WARNING_THRESHOLD:
+            status = 'warning'
+        else:
+            status = 'normal'
+        
+        return jsonify({
+            'session_id': session_id,
+            'tokens_used': tokens_used,
+            'tokens_limit': CONTEXT_WINDOW,
+            'usage_percentage': round(usage_percentage * 100, 1),
+            'message_count': len(session_messages),
+            'warning_threshold': CONTEXT_WARNING_THRESHOLD,
+            'truncate_threshold': CONTEXT_TRUNCATE_THRESHOLD,
+            'status': status
+        })
+        
     except Exception as e:
-        logger.error(f"Error getting session debug: {str(e)}")
+        logger.error(f"Error getting context status: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.errorhandler(404)

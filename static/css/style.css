@@ -419,6 +419,26 @@ body {
 }
 
 /* Artifact header styles moved to JavaScript for dynamic functionality */
+.artifact-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.artifact-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.artifact-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 
 .artifact-title {
     font-weight: 600;
@@ -434,6 +454,71 @@ body {
     font-size: 12px;
     font-weight: 500;
     text-transform: uppercase;
+}
+
+.artifact-permalink-btn {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    color: #6b7280;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.artifact-permalink-btn:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+    color: #374151;
+}
+
+.artifact-collapse-btn {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    color: #6b7280;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.artifact-collapse-btn:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+    color: #374151;
+}
+
+.artifact-building {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    animation: pulse 1.5s infinite;
+}
+
+/* Collapsible artifact states */
+.artifact-item.collapsed .artifact-item-content {
+    display: none;
+}
+
+.artifact-item.expanded .artifact-item-content {
+    display: block;
+}
+
+.artifact-item.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+.artifact-item.expanded .collapse-icon {
+    transform: rotate(0deg);
 }
 
 .artifact-item-content {
