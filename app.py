@@ -216,7 +216,7 @@ claude_client = None  # Initialize lazily to avoid startup issues
 # Global variables for session management
 chat_sessions = {}
 
-def stream_claude_response(messages, session_id=None):
+def stream_claude_response(messages, session_id=None, slide_api_key=None):
     """Direct HTTP streaming to Claude API with proper MCP tool integration"""
     headers = {
         'Content-Type': 'application/json',
@@ -277,11 +277,15 @@ The artifact tags help the interface properly display and manage your creations.
 
 """
 
-    # Get MCP tools if server is running
+    # Get MCP tools if API key is available
     tools = []
-    if mcp_manager.is_server_running():
-        tools = mcp_manager.get_tools_for_claude()
-        logger.info(f"Including {len(tools)} MCP tools in Claude request")
+    if slide_api_key and mcp_manager.is_server_available():
+        try:
+            tools = mcp_manager.get_tools_for_claude(slide_api_key)
+            logger.info(f"Including {len(tools)} MCP tools in Claude request")
+        except Exception as e:
+            logger.warning(f"Failed to get MCP tools with provided API key: {e}")
+            # Continue without tools rather than failing the entire request
     
     # Build the conversation with tool results
     conversation_messages = messages.copy()
@@ -442,10 +446,14 @@ The artifact tags help the interface properly display and manage your creations.
                     
                     try:
                         # Execute the tool
-                        tool_result = mcp_manager.call_tool(
-                            tool_use['name'], 
-                            tool_use['input']
-                        )
+                        if not slide_api_key:
+                            tool_result = {"error": "Slide API key is required to use Slide tools. Please provide your API key."}
+                        else:
+                            tool_result = mcp_manager.call_tool(
+                                tool_use['name'], 
+                                tool_use['input'],
+                                slide_api_key
+                            )
                         
                         # Show tool use block data for UI
                         yield "TOOL_USE_START"
@@ -545,6 +553,7 @@ def chat():
         data = request.get_json()
         message = data.get('message', '').strip()
         session_id = data.get('session_id', 'default')
+        slide_api_key = data.get('slide_api_key', '').strip()
         
         if not message:
             return jsonify({'error': 'Message is required'}), 400
@@ -596,7 +605,7 @@ def chat():
                 chat_content = ""  # Content to show in chat (excluding artifacts)
                 inside_artifact = False  # Track if we're currently inside an artifact
                 
-                for text_chunk in stream_claude_response(messages, session_id):
+                for text_chunk in stream_claude_response(messages, session_id, slide_api_key):
                     response_content += text_chunk
                     
                     # Check for artifacts in the current content and stream them
@@ -613,36 +622,46 @@ def chat():
                         yield f"data: {json.dumps({'type': 'text', 'content': filtered_chunk})}\n\n"
                 
                 # Final cleanup: mark all incomplete artifacts as complete and remove empty ones
-                final_artifacts_update = []
-                artifacts_to_remove = []
+                # IMPORTANT: Wrap this in try-catch to ensure completion signal is always sent
+                try:
+                    final_artifacts_update = []
+                    artifacts_to_remove = []
+                    
+                    for artifact_start, artifact_data in current_artifacts.items():
+                        if not artifact_data.get('complete', False):
+                            # Check if artifact has meaningful content
+                            content = artifact_data.get('content', '').strip()
+                            if len(content) > 10:  # Only keep artifacts with substantial content
+                                artifact_data['complete'] = True
+                                
+                                # Save artifact to file and get permalink
+                                try:
+                                    permalink = save_artifact_to_file(artifact_data)
+                                    if permalink:
+                                        artifact_data['permalink'] = permalink
+                                except Exception as save_error:
+                                    logger.error(f"Failed to save artifact {artifact_data.get('id', 'unknown')}: {save_error}")
+                                    # Continue without permalink
+                                
+                                final_artifacts_update.append(artifact_data)
+                            else:
+                                # Mark empty artifacts for removal
+                                artifacts_to_remove.append({
+                                    'id': artifact_data['id'],
+                                    'action': 'remove'
+                                })
+                    
+                    # Send final updates for completed artifacts
+                    if final_artifacts_update:
+                        yield f"data: {json.dumps({'type': 'artifacts_update', 'content': final_artifacts_update})}\n\n"
+                    
+                    # Send removal signals for empty artifacts
+                    if artifacts_to_remove:
+                        yield f"data: {json.dumps({'type': 'artifacts_remove', 'content': artifacts_to_remove})}\n\n"
                 
-                for artifact_start, artifact_data in current_artifacts.items():
-                    if not artifact_data.get('complete', False):
-                        # Check if artifact has meaningful content
-                        content = artifact_data.get('content', '').strip()
-                        if len(content) > 10:  # Only keep artifacts with substantial content
-                            artifact_data['complete'] = True
-                            
-                            # Save artifact to file and get permalink
-                            permalink = save_artifact_to_file(artifact_data)
-                            if permalink:
-                                artifact_data['permalink'] = permalink
-                            
-                            final_artifacts_update.append(artifact_data)
-                        else:
-                            # Mark empty artifacts for removal
-                            artifacts_to_remove.append({
-                                'id': artifact_data['id'],
-                                'action': 'remove'
-                            })
-                
-                # Send final updates for completed artifacts
-                if final_artifacts_update:
-                    yield f"data: {json.dumps({'type': 'artifacts_update', 'content': final_artifacts_update})}\n\n"
-                
-                # Send removal signals for empty artifacts
-                if artifacts_to_remove:
-                    yield f"data: {json.dumps({'type': 'artifacts_remove', 'content': artifacts_to_remove})}\n\n"
+                except Exception as artifact_error:
+                    logger.error(f"Error during final artifact processing: {artifact_error}")
+                    # Continue to completion even if artifact processing fails
                 
                 # Add assistant response to session (use chat content without artifacts)
                 assistant_content = chat_content if chat_content.strip() else "Created an artifact for you."
@@ -660,9 +679,12 @@ def chat():
                 })
                 
                 # Save debug log for this session
-                save_session_debug_log(session_id, messages, response_content, user_agent=user_agent, ip_address=ip_address)
+                try:
+                    save_session_debug_log(session_id, messages, response_content, user_agent=user_agent, ip_address=ip_address)
+                except Exception as log_error:
+                    logger.error(f"Failed to save debug log: {log_error}")
                 
-                # Send completion signal
+                # ALWAYS send completion signal - this ensures UI stops showing "working" state
                 yield f"data: {json.dumps({'type': 'complete'})}\n\n"
                 
             except Exception as e:
@@ -889,9 +911,9 @@ def serve_artifact(filename):
     except FileNotFoundError:
         return jsonify({'error': 'Artifact not found'}), 404
 
-@app.route('/mcp/start', methods=['POST'])
-def start_mcp_server():
-    """Start the MCP server with the provided API key"""
+@app.route('/mcp/validate', methods=['POST'])
+def validate_slide_api_key():
+    """Validate a Slide API key by attempting to get tools"""
     try:
         data = request.get_json()
         api_key = data.get('api_key', '').strip()
@@ -902,33 +924,55 @@ def start_mcp_server():
         if not api_key.startswith('tk_'):
             return jsonify({'error': 'Invalid API key format'}), 400
         
-        success = mcp_manager.start_server(api_key)
+        # Try to get tools to validate the key
+        tools = mcp_manager.get_tools_for_claude(api_key)
         
-        if success:
-            status = mcp_manager.get_server_status()
+        if tools:
             return jsonify({
-                'success': True,
-                'message': 'MCP server started successfully',
-                'status': status
+                'valid': True,
+                'message': 'API key is valid',
+                'tools_count': len(tools),
+                'tools': [tool.get('name') for tool in tools]
             })
         else:
-            return jsonify({'error': 'Failed to start MCP server'}), 500
+            return jsonify({
+                'valid': False,
+                'error': 'Failed to retrieve tools with this API key'
+            }), 400
             
     except Exception as e:
-        logger.error(f"Error starting MCP server: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error validating API key: {str(e)}")
+        return jsonify({
+            'valid': False,
+            'error': str(e)
+        }), 500
 
-@app.route('/mcp/stop', methods=['POST'])
-def stop_mcp_server():
-    """Stop the MCP server"""
+@app.route('/mcp/test', methods=['POST'])
+def test_mcp_tool():
+    """Test a specific MCP tool with the provided API key"""
     try:
-        mcp_manager.stop_server()
+        data = request.get_json()
+        api_key = data.get('api_key', '').strip()
+        tool_name = data.get('tool_name', '').strip()
+        tool_args = data.get('arguments', {})
+        
+        if not api_key:
+            return jsonify({'error': 'API key is required'}), 400
+            
+        if not tool_name:
+            return jsonify({'error': 'Tool name is required'}), 400
+        
+        # Call the tool
+        result = mcp_manager.call_tool(tool_name, tool_args, api_key)
+        
         return jsonify({
             'success': True,
-            'message': 'MCP server stopped successfully'
+            'tool_name': tool_name,
+            'result': result
         })
+        
     except Exception as e:
-        logger.error(f"Error stopping MCP server: {str(e)}")
+        logger.error(f"Error testing MCP tool: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/mcp/status')
