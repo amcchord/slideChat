@@ -697,7 +697,22 @@ class ClaudeChatClient {
     renderArtifactContent(artifact) {
         switch (artifact.type) {
             case 'html':
-                return `<iframe class="artifact-html" srcdoc="${this.escapeHtml(artifact.content)}"></iframe>`;
+                // Show source code while building, iframe when complete
+                if (artifact.complete === false) {
+                    return `
+                        <div class="artifact-source-view">
+                            <div class="source-header">
+                                <span class="source-label">HTML Source (Building...)</span>
+                                <div class="source-progress">
+                                    <div class="progress-spinner"></div>
+                                </div>
+                            </div>
+                            <pre class="artifact-html-source"><code class="language-html">${this.escapeHtml(artifact.content)}</code></pre>
+                        </div>
+                    `;
+                } else {
+                    return `<iframe class="artifact-html" srcdoc="${this.escapeHtml(artifact.content)}"></iframe>`;
+                }
                 
             case 'markdown':
                 return `<div class="artifact-markdown-rendered">${this.renderFullMarkdown(artifact.content)}</div>`;
@@ -760,28 +775,38 @@ class ClaudeChatClient {
     }
     
     showTimeoutWarning() {
-        const elapsedTime = Math.floor((Date.now() - this.responseStartTime) / 1000);
-        this.setStatus('thinking', `Claude is taking longer than usual... (${elapsedTime}s)`);
+        // Check if Claude is currently working on artifacts
+        const hasIncompleteArtifacts = this.artifacts.some(artifact => artifact.complete === false);
         
-        // Add a timeout warning message to the chat
-        const existingWarning = document.querySelector('.timeout-warning');
-        if (!existingWarning) {
-            const warningDiv = document.createElement('div');
-            warningDiv.className = 'timeout-warning system-message';
-            warningDiv.innerHTML = `
-                <div class="warning-content">
-                    <div class="warning-icon">⚠️</div>
-                    <div class="warning-text">
-                        <strong>Claude is taking longer than usual to respond...</strong>
-                        <p>This might be due to a complex query or temporary network issues.</p>
-                        <button class="cancel-request-btn" onclick="chatClient.cancelCurrentRequest()">
-                            Cancel Request
-                        </button>
+        const elapsedTime = Math.floor((Date.now() - this.responseStartTime) / 1000);
+        
+        if (hasIncompleteArtifacts) {
+            // If artifacts are being built, show a different status message
+            this.setStatus('thinking', `Claude is building artifacts... (${elapsedTime}s)`);
+        } else {
+            // Show the usual timeout warning only if no artifacts are being built
+            this.setStatus('thinking', `Claude is taking longer than usual... (${elapsedTime}s)`);
+            
+            // Add a timeout warning message to the chat
+            const existingWarning = document.querySelector('.timeout-warning');
+            if (!existingWarning) {
+                const warningDiv = document.createElement('div');
+                warningDiv.className = 'timeout-warning system-message';
+                warningDiv.innerHTML = `
+                    <div class="warning-content">
+                        <div class="warning-icon">⚠️</div>
+                        <div class="warning-text">
+                            <strong>Claude is taking longer than usual to respond...</strong>
+                            <p>This might be due to a complex query or temporary network issues.</p>
+                            <button class="cancel-request-btn" onclick="chatClient.cancelCurrentRequest()">
+                                Cancel Request
+                            </button>
+                        </div>
                     </div>
-                </div>
-            `;
-            this.chatMessages.appendChild(warningDiv);
-            this.scrollToBottom();
+                `;
+                this.chatMessages.appendChild(warningDiv);
+                this.scrollToBottom();
+            }
         }
     }
     
