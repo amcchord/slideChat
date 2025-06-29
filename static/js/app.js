@@ -17,11 +17,18 @@ class ClaudeChatClient {
         this.lastResponseTime = null;
         this.responseStartTime = null;
         
+        // Streaming state for scroll behavior
+        this.isStreaming = false;
+        
         this.initializeElements();
         this.setupEventListeners();
         this.initializeTime();
         this.configureMarkdown();
-        this.loadApiKey();
+        
+        // Load API key from storage on startup (async)
+        this.loadApiKey().catch(error => {
+            console.error('Error loading API key on startup:', error);
+        });
     }
     
     initializeElements() {
@@ -219,10 +226,16 @@ class ClaudeChatClient {
         // Add typing indicator
         const typingIndicator = this.addTypingIndicator();
         
+        // Set streaming state
+        this.isStreaming = true;
+        
         try {
             await this.streamResponse(message, typingIndicator);
         } catch (error) {
             this.handleError(error, typingIndicator);
+        } finally {
+            // Clear streaming state
+            this.isStreaming = false;
         }
     }
     
@@ -253,7 +266,7 @@ class ClaudeChatClient {
         `;
         
         this.chatMessages.appendChild(messageDiv);
-        this.scrollToBottom();
+        this.scrollToBottom(true); // Force scroll when adding new messages
         
         return messageDiv;
     }
@@ -317,7 +330,8 @@ class ClaudeChatClient {
                 },
                 body: JSON.stringify({
                     message: message,
-                    session_id: this.sessionId
+                    session_id: this.sessionId,
+                    slide_api_key: this.slideApiKey || ''
                 }),
                 signal: signal
             })
@@ -347,6 +361,8 @@ class ClaudeChatClient {
                             this.cleanupTimeouts();
                             this.setInputEnabled(true);
                             this.setStatus('ready', 'Ready');
+                            // Ensure final scroll to bottom when done
+                            this.scrollToBottom(true);
                             resolve();
                             return;
                         }
@@ -392,11 +408,13 @@ class ClaudeChatClient {
                                     } else if (data.type === 'artifact') {
                                         this.addArtifact(data.content);
                                        
-                                    } else if (data.type === 'complete') {
-                                        this.setInputEnabled(true);
-                                        this.setStatus('ready', 'Ready');
-                                        resolve();
-                                        return;
+                                                        } else if (data.type === 'complete') {
+                        this.setInputEnabled(true);
+                        this.setStatus('ready', 'Ready');
+                        // Ensure final scroll to bottom when complete
+                        this.scrollToBottom(true);
+                        resolve();
+                        return;
                                         
                                     } else if (data.type === 'hide_warning') {
                                         this.hideTimeoutWarning();
@@ -971,10 +989,21 @@ class ClaudeChatClient {
         }
     }
     
-    scrollToBottom() {
+    scrollToBottom(forceScroll = false) {
+        // During streaming or when forced, always scroll to bottom
+        if (this.isStreaming || forceScroll) {
+            requestAnimationFrame(() => {
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+            });
+            return;
+        }
+        
+        // When not streaming, only scroll if user is already at bottom (respectful scrolling)
         const isAtBottom = this.chatMessages.scrollTop + this.chatMessages.clientHeight >= this.chatMessages.scrollHeight - 10;
         if (isAtBottom || this.chatMessages.scrollTop === 0) {
-            this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+            requestAnimationFrame(() => {
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+            });
         }
     }
     
@@ -1020,7 +1049,7 @@ class ClaudeChatClient {
         }
     }
     
-    saveApiKeyHandler() {
+    async saveApiKeyHandler() {
         const apiKey = this.apiKeyInput.value.trim();
         
         if (!apiKey) {
@@ -1034,45 +1063,56 @@ class ClaudeChatClient {
         }
         
         try {
-            this.slideApiKey = apiKey;
-            this.saveApiKeyToCookie(apiKey);
-            this.updateApiKeyStatus(true);
-            this.closeApiKeyModal();
+            // Validate the API key before saving
+            const isValid = await this.validateMCPApiKey(apiKey);
             
-            // Automatically start MCP server with the new API key
-            this.startMCPServer(apiKey);
-            
-            // Show success message
-            console.log('Slide API key saved successfully');
+            if (isValid) {
+                this.slideApiKey = apiKey;
+                this.saveApiKeyToCookie(apiKey);
+                this.updateApiKeyStatus(true);
+                this.closeApiKeyModal();
+                
+                // Show success message
+                console.log('Slide API key saved and validated successfully');
+            } else {
+                alert('Invalid API key. Please check your key and try again.');
+            }
         } catch (error) {
             console.error('Error saving API key:', error);
-            alert('Error saving API key. Please try again.');
+            alert('Error validating API key. Please check your connection and try again.');
         }
     }
     
     removeApiKeyHandler() {
         if (confirm('Are you sure you want to remove the Slide API key?')) {
-            // Stop MCP server first
-            this.stopMCPServer();
-            
             this.slideApiKey = null;
             this.removeApiKeyFromCookie();
             this.updateApiKeyStatus(false);
             this.closeApiKeyModal();
+            this.setStatus('ready', 'Ready');
             
             console.log('Slide API key removed');
         }
     }
     
-    loadApiKey() {
+    async loadApiKey() {
         try {
             const encryptedKey = this.getCookie('slide_api_key');
             if (encryptedKey) {
                 this.slideApiKey = this.decryptApiKey(encryptedKey);
-                this.updateApiKeyStatus(true);
                 
-                // Automatically start MCP server if API key is loaded
-                this.startMCPServer(this.slideApiKey);
+                // Validate the loaded API key
+                const isValid = await this.validateMCPApiKey(this.slideApiKey);
+                
+                if (isValid) {
+                    this.updateApiKeyStatus(true);
+                } else {
+                    // Invalid key, remove it
+                    this.slideApiKey = null;
+                    this.removeApiKeyFromCookie();
+                    this.updateApiKeyStatus(false);
+                    console.warn('Loaded API key is invalid, removed from storage');
+                }
             } else {
                 this.updateApiKeyStatus(false);
             }
@@ -1160,10 +1200,10 @@ class ClaudeChatClient {
         return null;
     }
     
-    // MCP Server Management Methods
-    async startMCPServer(apiKey) {
+        // MCP Server Management Methods
+    async validateMCPApiKey(apiKey) {
         try {
-            const response = await fetch('/mcp/start', {
+            const response = await fetch('/mcp/validate', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1175,38 +1215,48 @@ class ClaudeChatClient {
             
             const result = await response.json();
             
-            if (result.success) {
-                console.log('MCP server started:', result.message);
-                this.setStatus('ready', `Ready (${result.status.tools_count} tools)`);
+            if (result.valid) {
+                console.log('API key validated:', result.message);
+                this.setStatus('ready', `Ready (${result.tools_count} tools)`);
+                return true;
             } else {
-                console.error('Failed to start MCP server:', result.error);
-                this.setStatus('error', 'MCP Error');
+                console.error('API key validation failed:', result.error);
+                this.setStatus('error', 'Invalid API Key');
+                return false;
             }
         } catch (error) {
-            console.error('Error starting MCP server:', error);
+            console.error('Error validating API key:', error);
             this.setStatus('error', 'MCP Error');
+            return false;
         }
     }
-    
-    async stopMCPServer() {
+
+    async testMCPTool(apiKey, toolName, toolArgs = {}) {
         try {
-            const response = await fetch('/mcp/stop', {
+            const response = await fetch('/mcp/test', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                }
+                },
+                body: JSON.stringify({
+                    api_key: apiKey,
+                    tool_name: toolName,
+                    arguments: toolArgs
+                })
             });
             
             const result = await response.json();
             
             if (result.success) {
-                console.log('MCP server stopped:', result.message);
-                this.setStatus('ready', 'Ready');
+                console.log('Tool test successful:', result);
+                return result;
             } else {
-                console.error('Failed to stop MCP server:', result.error);
+                console.error('Tool test failed:', result.error);
+                return null;
             }
         } catch (error) {
-            console.error('Error stopping MCP server:', error);
+            console.error('Error testing tool:', error);
+            return null;
         }
     }
     
@@ -1215,16 +1265,16 @@ class ClaudeChatClient {
             const response = await fetch('/mcp/status');
             const status = await response.json();
             
-            if (status.running) {
-                this.setStatus('ready', `Ready (${status.tools_count} tools)`);
+            if (status.available) {
+                this.setStatus('ready', 'Ready (Stateless MCP)');
             } else {
-                this.setStatus('ready', 'Ready');
+                this.setStatus('error', 'MCP Unavailable');
             }
             
             return status;
         } catch (error) {
             console.error('Error getting MCP status:', error);
-            return { running: false, tools_count: 0, tools: [] };
+            return { available: false, stateless: true };
         }
     }
     
