@@ -572,6 +572,9 @@ class ClaudeChatClient {
         
         // Re-render artifacts to show updates
         this.renderArtifacts();
+        
+        // Auto-scroll HTML source code views to bottom when building
+        this.scrollHtmlSourceToBottom();
     }
     
     removeArtifacts(artifactsToRemove) {
@@ -1410,6 +1413,26 @@ class ClaudeChatClient {
     }
     
     // createToolBlockAfterMessage method removed - tool blocks are now hidden
+    
+    scrollHtmlSourceToBottom() {
+        // Find all HTML artifacts that are currently being built
+        const incompleteHtmlArtifacts = this.artifacts.filter(artifact => 
+            artifact.type === 'html' && artifact.complete === false
+        );
+        
+        // Scroll each HTML source container to the bottom
+        incompleteHtmlArtifacts.forEach(artifact => {
+            const artifactElement = document.querySelector(`[data-artifact-id="${artifact.id}"]`);
+            if (artifactElement) {
+                const sourceContainer = artifactElement.querySelector('.artifact-html-source');
+                if (sourceContainer) {
+                    requestAnimationFrame(() => {
+                        sourceContainer.scrollTop = sourceContainer.scrollHeight;
+                    });
+                }
+            }
+        });
+    }
 }
 
 // Additional CSS for status indicators
