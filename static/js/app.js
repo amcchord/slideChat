@@ -234,8 +234,9 @@ class ClaudeChatClient {
         } catch (error) {
             this.handleError(error, typingIndicator);
         } finally {
-            // Clear streaming state
+            // Clear streaming state and ensure timeout cleanup
             this.isStreaming = false;
+            this.cleanupTimeouts();
         }
     }
     
@@ -409,6 +410,7 @@ class ClaudeChatClient {
                                         this.addArtifact(data.content);
                                        
                                                         } else if (data.type === 'complete') {
+                        this.cleanupTimeouts();
                         this.setInputEnabled(true);
                         this.setStatus('ready', 'Ready');
                         // Ensure final scroll to bottom when complete
