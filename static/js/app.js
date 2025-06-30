@@ -578,8 +578,8 @@ class ClaudeChatClient {
         // Re-render artifacts to show updates
         this.renderArtifacts();
         
-        // Auto-scroll HTML source code views to bottom when building
-        this.scrollHtmlSourceToBottom();
+        // Auto-scroll HTML and HAML source code views to bottom when building
+        this.scrollArtifactSourceToBottom();
     }
     
     removeArtifacts(artifactsToRemove) {
@@ -695,6 +695,7 @@ class ClaudeChatClient {
     getArtifactTypeLabel(type) {
         const labels = {
             'html': 'HTML',
+            'haml': 'HAML',
             'code': 'Code',
             'markdown': 'Markdown',
             'text': 'Text'
@@ -752,6 +753,66 @@ class ClaudeChatClient {
                     }
                 }
                 
+            case 'haml':
+                // Show HAML source code while building, iframe when complete
+                if (artifact.complete === false) {
+                    return `
+                        <div class="artifact-source-view">
+                            <div class="source-header">
+                                <span class="source-label">HAML Source (Building...)</span>
+                                <div class="source-progress">
+                                    <div class="progress-spinner"></div>
+                                </div>
+                            </div>
+                            <pre class="artifact-html-source"><code class="language-haml">${this.escapeHtml(artifact.content)}</code></pre>
+                        </div>
+                    `;
+                } else {
+                    // HAML artifacts are processed to HTML on the backend, so they render like HTML
+                    if (artifact.permalink) {
+                        const iframeId = `iframe_${artifact.id}`;
+                        return `
+                            <div class="artifact-html-container">
+                                <iframe 
+                                    id="${iframeId}"
+                                    class="artifact-html" 
+                                    src="${artifact.permalink}" 
+                                    title="${this.escapeHtml(artifact.title || 'HAML Artifact (HTML rendered)')}"
+                                    onload="window.claudeChat.handleIframeLoad('${iframeId}')"
+                                    onerror="window.claudeChat.handleIframeError('${iframeId}', '${artifact.permalink}')"
+                                    style="display: none;"
+                                ></iframe>
+                                <div id="${iframeId}_loading" class="artifact-html-loading">
+                                    <div class="loading-spinner"></div>
+                                    <div>Loading HAML artifact...</div>
+                                </div>
+                                <div id="${iframeId}_error" class="artifact-html-error" style="display: none;">
+                                    <div class="error-icon">⚠️</div>
+                                    <div>Failed to load HAML artifact</div>
+                                    <button class="retry-button" onclick="window.claudeChat.retryIframe('${iframeId}', '${artifact.permalink}')">
+                                        Retry
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        // HAML artifacts without permalink should show an error since HAML can't be directly rendered
+                        return `
+                            <div class="artifact-error">
+                                <div class="error-icon">⚠️</div>
+                                <div class="error-message">
+                                    <strong>HAML Processing Failed</strong><br>
+                                    The HAML artifact could not be converted to HTML. This may be due to a syntax error or server issue.
+                                </div>
+                                <details class="error-details">
+                                    <summary>View HAML Source</summary>
+                                    <pre class="artifact-source-error"><code class="language-haml">${this.escapeHtml(artifact.content)}</code></pre>
+                                </details>
+                            </div>
+                        `;
+                    }
+                }
+                
             case 'markdown':
                 return `<div class="artifact-markdown-rendered">${this.renderFullMarkdown(artifact.content)}</div>`;
                 
@@ -771,6 +832,9 @@ class ClaudeChatClient {
     
     // Timeout and error handling methods
     setupTimeoutHandling(rejectCallback) {
+        // Store the reject callback for use in timeout resets
+        this.currentRejectCallback = rejectCallback;
+        
         // Set up warning timeout (show warning after 30 seconds)
         this.warningTimeoutId = setTimeout(() => {
             this.showTimeoutWarning();
@@ -783,18 +847,26 @@ class ClaudeChatClient {
     }
     
     resetTimeoutWarning() {
-        // Clear and reset only the warning timeout when we receive data
+        // Clear and reset both warning and hard timeouts when we receive data
         if (this.warningTimeoutId) {
             clearTimeout(this.warningTimeoutId);
         }
-        
-        // Only reset warning if we haven't shown it yet
-        const elapsedTime = Date.now() - this.responseStartTime;
-        if (elapsedTime < this.timeoutWarningDelay) {
-            this.warningTimeoutId = setTimeout(() => {
-                this.showTimeoutWarning();
-            }, this.timeoutWarningDelay - elapsedTime);
+        if (this.timeoutId) {
+            clearTimeout(this.timeoutId);
         }
+        
+        // Reset the response start time to extend the timeout window
+        this.responseStartTime = Date.now();
+        
+        // Restart both timeouts from the current time
+        this.warningTimeoutId = setTimeout(() => {
+            this.showTimeoutWarning();
+        }, this.timeoutWarningDelay);
+        
+        // Restart the hard timeout
+        this.timeoutId = setTimeout(() => {
+            this.handleTimeout(this.currentRejectCallback);
+        }, this.responseTimeout);
         
         this.hideTimeoutWarning();
     }
@@ -810,6 +882,7 @@ class ClaudeChatClient {
         }
         this.hideTimeoutWarning();
         this.currentAbortController = null;
+        this.currentRejectCallback = null;
     }
     
     showTimeoutWarning() {
@@ -820,10 +893,10 @@ class ClaudeChatClient {
         
         if (hasIncompleteArtifacts) {
             // If artifacts are being built, show a different status message
-            this.setStatus('thinking', `Claude is building artifacts... (${elapsedTime}s)`);
+            this.setStatus('thinking', `Claude is building.. (${elapsedTime}s)`);
         } else {
             // Show the usual timeout warning only if no artifacts are being built
-            this.setStatus('thinking', `Claude is taking longer than usual... (${elapsedTime}s)`);
+            this.setStatus('thinking', `Claude is slow... (${elapsedTime}s)`);
             
             // Add a timeout warning message to the chat
             const existingWarning = document.querySelector('.timeout-warning');
@@ -1449,14 +1522,14 @@ class ClaudeChatClient {
     
     // createToolBlockAfterMessage method removed - tool blocks are now hidden
     
-    scrollHtmlSourceToBottom() {
-        // Find all HTML artifacts that are currently being built
-        const incompleteHtmlArtifacts = this.artifacts.filter(artifact => 
-            artifact.type === 'html' && artifact.complete === false
+    scrollArtifactSourceToBottom() {
+        // Find all HTML and HAML artifacts that are currently being built
+        const incompleteSourceArtifacts = this.artifacts.filter(artifact => 
+            (artifact.type === 'html' || artifact.type === 'haml') && artifact.complete === false
         );
         
-        // Scroll each HTML source container to the bottom
-        incompleteHtmlArtifacts.forEach(artifact => {
+        // Scroll each source container to the bottom
+        incompleteSourceArtifacts.forEach(artifact => {
             const artifactElement = document.querySelector(`[data-artifact-id="${artifact.id}"]`);
             if (artifactElement) {
                 const sourceContainer = artifactElement.querySelector('.artifact-html-source');

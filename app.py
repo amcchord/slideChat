@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import re
 import httpx
 from mcp_manager import mcp_manager
+from haml_processor import convert_haml_to_html
 
 # Application version
 VERSION = "1.1.0"
@@ -123,6 +124,17 @@ def save_session_debug_log(session_id, messages, response_content, error=None, u
     except Exception as e:
         logger.error(f"Failed to save debug log: {e}")
 
+def convert_haml_to_html_content(haml_content):
+    """Convert HAML content to HTML using our custom processor"""
+    try:
+        # Convert HAML to HTML using our custom processor
+        html_content = convert_haml_to_html(haml_content)
+        
+        return html_content
+    except Exception as e:
+        logger.error(f"Error converting HAML to HTML: {e}")
+        raise Exception(f"HAML processing error: {str(e)}")
+
 def save_artifact_to_file(artifact):
     """Save a completed artifact to the artifacts directory and return the permalink"""
     try:
@@ -137,6 +149,16 @@ def save_artifact_to_file(artifact):
         if not content:
             raise ValueError("Artifact content is empty")
         
+        # Process HAML content to HTML if needed
+        original_type = artifact.get('type', 'text')
+        if original_type == 'haml':
+            try:
+                content = convert_haml_to_html_content(content)
+                logger.info(f"Successfully converted HAML to HTML ({len(content)} chars)")
+            except Exception as e:
+                logger.error(f"HAML conversion failed: {e}")
+                raise ValueError(f"Failed to process HAML content: {str(e)}")
+        
         # Generate unique filename using timestamp and random ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
@@ -144,6 +166,7 @@ def save_artifact_to_file(artifact):
         # Determine file extension based on artifact type
         extensions = {
             'html': '.html',
+            'haml': '.html',  # HAML artifacts are saved as HTML after processing
             'code': '.txt',
             'markdown': '.md',
             'text': '.txt'
@@ -191,10 +214,12 @@ def save_artifact_to_file(artifact):
             'id': artifact.get('id'),
             'title': title,
             'type': artifact.get('type', 'text'),
+            'original_type': original_type,  # Preserve original type for HAML artifacts
             'language': artifact.get('language'),
             'created_at': datetime.now().isoformat(),
             'filename': filename,
-            'content_length': len(content)
+            'content_length': len(content),
+            'processed': original_type == 'haml'  # Flag to indicate content was processed
         }
         
         # Save the artifact content
@@ -254,7 +279,11 @@ def stream_claude_response(messages, session_id=None, slide_api_key=None):
         log_api_interaction(session_id, 'request_start', {'message_count': len(messages)})
     
     # Prepare system message with Slide device information
-    system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+    current_datetime = datetime.utcnow().strftime("%A, %B %d, %Y at %I:%M %p UTC")
+    system_message = f"""You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+
+CURRENT DATE & TIME: {current_datetime}
+(This timestamp is updated for each request, so you always have the current time)
 
 Slide is a backup provider that sells on-premises BCDR (Business Continuity and Disaster Recovery) devices that back up local servers and create copies in the cloud. Slide can virtualize failed servers both locally and in the cloud.
 
@@ -274,7 +303,7 @@ Users like reports and data presented as a markdown artifact that uses tables an
 IMPORTANT: When creating markdown you should always do it as a markdown artifact. We support GitHub Flavored Markdown which means images can be embedded. 
 IMPORTANT: When working with screenshots images the users are expecting them to used at thumbnail to icon sizes (not larger than 200px wide). Please make sure you set their size in the markdown.
 
-IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wrap them in <artifact> tags like this:
+IMPORTANT: When creating artifacts (code, HTML, HAML, markdown documents), you MUST wrap them in <artifact> tags like this:
 
 <artifact type="markdown" title="Report Title">
 # Your markdown content here
@@ -285,6 +314,15 @@ IMPORTANT: When creating artifacts (code, HTML, markdown documents), you MUST wr
 <html>...</html>
 </artifact>
 
+<artifact type="haml" title="HAML Web Page">
+!!!
+%html
+  %head
+    %title My Page
+  %body
+    %h1 Hello World
+</artifact>
+
 <artifact type="code" language="python" title="Python Script">
 def hello_world():
     print("Hello, World!")
@@ -292,13 +330,16 @@ def hello_world():
 
 Use these artifact tags for ANY substantial content that could be rendered separately from your explanation, including:
 - Markdown reports and documents
-- HTML pages and components  
+- HTML pages and components
+- HAML templates (which get converted to HTML automatically)
 - Code in any programming language
 - JSON data structures
 - XML files
 - Any other structured content
 
 The artifact tags help the interface properly display and manage your creations.
+
+NOTE: HAML artifacts are particularly useful for reducing token usage while creating HTML content. When you use HAML, the content is automatically converted to HTML when saved, but the source view shows the original HAML for reference.
 
 """
 
