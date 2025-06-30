@@ -405,19 +405,24 @@ class ClaudeChatClient {
                                         
                                     } else if (data.type === 'artifacts_remove') {
                                         this.removeArtifacts(data.content);
-                                        
-                                    } else if (data.type === 'artifact') {
-                                        this.addArtifact(data.content);
-                                       
-                                                        } else if (data.type === 'complete') {
-                        this.cleanupTimeouts();
-                        this.setInputEnabled(true);
-                        this.setStatus('ready', 'Ready');
-                        // Ensure final scroll to bottom when complete
-                        this.scrollToBottom(true);
-                        resolve();
-                        return;
-                                        
+                                    }
+                                    
+                                    if (data.type === 'artifact_save_error') {
+                                        this.handleArtifactSaveError(data.content);
+                                    }
+                                    
+                                    if (data.type === 'artifact_processing_error') {
+                                        this.handleArtifactProcessingError(data.content);
+                                    }
+                                    
+                                    if (data.type === 'complete') {
+                                        this.cleanupTimeouts();
+                                        this.setInputEnabled(true);
+                                        this.setStatus('ready', 'Ready');
+                                        // Ensure final scroll to bottom when complete
+                                        this.scrollToBottom(true);
+                                        resolve();
+                                        return;
                                     } else if (data.type === 'hide_warning') {
                                         this.hideTimeoutWarning();
                                         
@@ -1524,6 +1529,41 @@ class ClaudeChatClient {
                 iframe.src = src;
             }, 100);
         }
+    }
+
+    handleArtifactSaveError(errorData) {
+        // Display error message to user when artifact saving fails
+        const errorMessage = `
+            <div class="error-message artifact-save-error">
+                <div class="error-icon">💾❌</div>
+                <div class="error-content">
+                    <strong>Failed to Save Artifact</strong>
+                    <p><strong>Artifact:</strong> ${this.escapeHtml(errorData.artifact_title)}</p>
+                    <p><strong>Error:</strong> ${this.escapeHtml(errorData.error)}</p>
+                    <p>The artifact content is still visible, but it couldn't be saved permanently. You can copy the content manually if needed.</p>
+                </div>
+            </div>
+        `;
+        
+        this.addMessage('system', errorMessage);
+        console.error('Artifact save error:', errorData);
+    }
+
+    handleArtifactProcessingError(errorData) {
+        // Display error message when artifact processing fails
+        const errorMessage = `
+            <div class="error-message artifact-processing-error">
+                <div class="error-icon">🔧❌</div>
+                <div class="error-content">
+                    <strong>Artifact Processing Error</strong>
+                    <p><strong>Error:</strong> ${this.escapeHtml(errorData.error)}</p>
+                    <p>There was an error processing artifacts. Some artifacts may not have been saved properly.</p>
+                </div>
+            </div>
+        `;
+        
+        this.addMessage('system', errorMessage);
+        console.error('Artifact processing error:', errorData);
     }
 }
 

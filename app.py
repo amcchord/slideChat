@@ -126,6 +126,17 @@ def save_session_debug_log(session_id, messages, response_content, error=None, u
 def save_artifact_to_file(artifact):
     """Save a completed artifact to the artifacts directory and return the permalink"""
     try:
+        # Ensure artifacts directory exists
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        
+        # Validate artifact data
+        if not artifact or not isinstance(artifact, dict):
+            raise ValueError("Invalid artifact data")
+        
+        content = artifact.get('content', '').strip()
+        if not content:
+            raise ValueError("Artifact content is empty")
+        
         # Generate unique filename using timestamp and random ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
@@ -166,8 +177,11 @@ def save_artifact_to_file(artifact):
             extension = lang_extensions.get(artifact.get('language', '').lower(), '.txt')
         
         # Create safe filename from title
-        safe_title = re.sub(r'[^a-zA-Z0-9_\-\s]', '', artifact.get('title', 'Untitled'))
+        title = artifact.get('title', 'Untitled')
+        safe_title = re.sub(r'[^a-zA-Z0-9_\-\s]', '', title)
         safe_title = re.sub(r'\s+', '_', safe_title.strip())[:50]  # Limit length
+        if not safe_title:
+            safe_title = 'Untitled'
         
         filename = f"{timestamp}_{safe_title}_{unique_id}{extension}"
         filepath = os.path.join(ARTIFACTS_DIR, filename)
@@ -175,16 +189,26 @@ def save_artifact_to_file(artifact):
         # Create metadata
         metadata = {
             'id': artifact.get('id'),
-            'title': artifact.get('title', 'Untitled'),
+            'title': title,
             'type': artifact.get('type', 'text'),
             'language': artifact.get('language'),
             'created_at': datetime.now().isoformat(),
-            'filename': filename
+            'filename': filename,
+            'content_length': len(content)
         }
         
         # Save the artifact content
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(artifact.get('content', ''))
+            f.write(content)
+        
+        # Verify file was written
+        if not os.path.exists(filepath):
+            raise IOError(f"Failed to create file: {filepath}")
+        
+        # Check file size matches expected
+        actual_size = os.path.getsize(filepath)
+        if actual_size == 0:
+            raise IOError(f"File was created but is empty: {filepath}")
         
         # Save metadata file
         metadata_filename = f"{timestamp}_{safe_title}_{unique_id}.meta.json"
@@ -196,12 +220,13 @@ def save_artifact_to_file(artifact):
         # Return permalink path
         permalink = f"/artifacts/{filename}"
         
-        logger.info(f"Artifact saved: {filepath}")
-        return permalink
+        logger.info(f"Artifact saved successfully: {filepath} ({actual_size} bytes)")
+        return {'success': True, 'permalink': permalink, 'filename': filename, 'size': actual_size}
         
     except Exception as e:
-        logger.error(f"Failed to save artifact: {e}")
-        return None
+        error_msg = f"Failed to save artifact: {str(e)}"
+        logger.error(error_msg)
+        return {'success': False, 'error': error_msg, 'error_type': type(e).__name__}
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -626,6 +651,7 @@ def chat():
                 try:
                     final_artifacts_update = []
                     artifacts_to_remove = []
+                    save_errors = []  # Track save errors to report to user
                     
                     for artifact_start, artifact_data in current_artifacts.items():
                         if not artifact_data.get('complete', False):
@@ -636,12 +662,33 @@ def chat():
                                 
                                 # Save artifact to file and get permalink
                                 try:
-                                    permalink = save_artifact_to_file(artifact_data)
-                                    if permalink:
-                                        artifact_data['permalink'] = permalink
+                                    save_result = save_artifact_to_file(artifact_data)
+                                    if save_result['success']:
+                                        artifact_data['permalink'] = save_result['permalink']
+                                        artifact_data['filename'] = save_result['filename']
+                                        artifact_data['saved_size'] = save_result['size']
+                                        logger.info(f"Successfully saved artifact {artifact_data.get('id', 'unknown')}: {save_result['permalink']}")
+                                    else:
+                                        # Save failed - add error info but still show artifact
+                                        artifact_data['save_error'] = save_result['error']
+                                        save_errors.append({
+                                            'artifact_id': artifact_data.get('id', 'unknown'),
+                                            'artifact_title': artifact_data.get('title', 'Untitled'),
+                                            'error': save_result['error'],
+                                            'error_type': save_result.get('error_type', 'Unknown')
+                                        })
+                                        logger.error(f"Failed to save artifact {artifact_data.get('id', 'unknown')}: {save_result['error']}")
                                 except Exception as save_error:
-                                    logger.error(f"Failed to save artifact {artifact_data.get('id', 'unknown')}: {save_error}")
-                                    # Continue without permalink
+                                    # Unexpected error during save
+                                    error_msg = f"Unexpected error saving artifact: {str(save_error)}"
+                                    artifact_data['save_error'] = error_msg
+                                    save_errors.append({
+                                        'artifact_id': artifact_data.get('id', 'unknown'),
+                                        'artifact_title': artifact_data.get('title', 'Untitled'),
+                                        'error': error_msg,
+                                        'error_type': type(save_error).__name__
+                                    })
+                                    logger.error(f"Unexpected error saving artifact {artifact_data.get('id', 'unknown')}: {save_error}")
                                 
                                 final_artifacts_update.append(artifact_data)
                             else:
@@ -658,10 +705,16 @@ def chat():
                     # Send removal signals for empty artifacts
                     if artifacts_to_remove:
                         yield f"data: {json.dumps({'type': 'artifacts_remove', 'content': artifacts_to_remove})}\n\n"
+                    
+                    # Send error notifications for failed saves
+                    if save_errors:
+                        for error in save_errors:
+                            yield f"data: {json.dumps({'type': 'artifact_save_error', 'content': error})}\n\n"
                 
                 except Exception as artifact_error:
                     logger.error(f"Error during final artifact processing: {artifact_error}")
-                    # Continue to completion even if artifact processing fails
+                    # Send error notification about artifact processing failure
+                    yield f"data: {json.dumps({'type': 'artifact_processing_error', 'content': {'error': str(artifact_error)}})}\n\n"
                 
                 # Add assistant response to session (use chat content without artifacts)
                 assistant_content = chat_content if chat_content.strip() else "Created an artifact for you."

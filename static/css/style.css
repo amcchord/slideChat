@@ -1119,4 +1119,43 @@ body {
     font-family: inherit;
     font-size: inherit;
     color: inherit;
+}
+
+/* Artifact Error Messages */
+.artifact-save-error {
+    border-left: 4px solid #f59e0b;
+    background: #fffbeb;
+    margin: 12px 0;
+}
+
+.artifact-save-error .error-icon {
+    color: #f59e0b;
+    font-size: 24px;
+}
+
+.artifact-save-error .error-content {
+    color: #92400e;
+}
+
+.artifact-save-error .error-content strong {
+    color: #78350f;
+}
+
+.artifact-processing-error {
+    border-left: 4px solid #ef4444;
+    background: #fef2f2;
+    margin: 12px 0;
+}
+
+.artifact-processing-error .error-icon {
+    color: #ef4444;
+    font-size: 24px;
+}
+
+.artifact-processing-error .error-content {
+    color: #b91c1c;
+}
+
+.artifact-processing-error .error-content strong {
+    color: #991b1b;
 } 
