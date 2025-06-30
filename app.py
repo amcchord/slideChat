@@ -907,7 +907,26 @@ def version():
 def serve_artifact(filename):
     """Serve saved artifacts from the artifacts directory"""
     try:
-        return send_from_directory(ARTIFACTS_DIR, filename)
+        # Check if file exists first
+        file_path = os.path.join(ARTIFACTS_DIR, filename)
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'Artifact not found'}), 404
+        
+        # Determine MIME type based on file extension
+        if filename.endswith('.html'):
+            mimetype = 'text/html'
+        elif filename.endswith('.css'):
+            mimetype = 'text/css'
+        elif filename.endswith('.js'):
+            mimetype = 'application/javascript'
+        elif filename.endswith('.json'):
+            mimetype = 'application/json'
+        elif filename.endswith('.xml'):
+            mimetype = 'application/xml'
+        else:
+            mimetype = None  # Let Flask auto-detect
+        
+        return send_from_directory(ARTIFACTS_DIR, filename, mimetype=mimetype)
     except FileNotFoundError:
         return jsonify({'error': 'Artifact not found'}), 404
 

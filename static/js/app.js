@@ -714,7 +714,37 @@ class ClaudeChatClient {
                         </div>
                     `;
                 } else {
-                    return `<iframe class="artifact-html" srcdoc="${this.escapeHtml(artifact.content)}"></iframe>`;
+                    // Use permalink URL as iframe source if available, fallback to srcdoc
+                    if (artifact.permalink) {
+                        const iframeId = `iframe_${artifact.id}`;
+                        return `
+                            <div class="artifact-html-container">
+                                <iframe 
+                                    id="${iframeId}"
+                                    class="artifact-html" 
+                                    src="${artifact.permalink}" 
+                                    title="${this.escapeHtml(artifact.title || 'HTML Artifact')}"
+                                    onload="window.claudeChat.handleIframeLoad('${iframeId}')"
+                                    onerror="window.claudeChat.handleIframeError('${iframeId}', '${artifact.permalink}')"
+                                    style="display: none;"
+                                ></iframe>
+                                <div id="${iframeId}_loading" class="artifact-html-loading">
+                                    <div class="loading-spinner"></div>
+                                    <div>Loading HTML artifact...</div>
+                                </div>
+                                <div id="${iframeId}_error" class="artifact-html-error" style="display: none;">
+                                    <div class="error-icon">⚠️</div>
+                                    <div>Failed to load HTML artifact</div>
+                                    <button class="retry-button" onclick="window.claudeChat.retryIframe('${iframeId}', '${artifact.permalink}')">
+                                        Retry
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        // Fallback to srcdoc if permalink is not available
+                        return `<iframe class="artifact-html" srcdoc="${this.escapeHtml(artifact.content)}" title="${this.escapeHtml(artifact.title || 'HTML Artifact')}"></iframe>`;
+                    }
                 }
                 
             case 'markdown':
@@ -1432,6 +1462,68 @@ class ClaudeChatClient {
                 }
             }
         });
+    }
+
+    handleIframeLoad(iframeId) {
+        // Hide loading indicator and show iframe
+        const iframe = document.getElementById(iframeId);
+        const loadingDiv = document.getElementById(`${iframeId}_loading`);
+        const errorDiv = document.getElementById(`${iframeId}_error`);
+        
+        if (iframe && loadingDiv) {
+            loadingDiv.style.display = 'none';
+            iframe.style.display = 'block';
+            
+            // Hide error div if it was showing
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+            }
+        }
+    }
+
+    handleIframeError(iframeId, src) {
+        // Hide loading indicator and iframe, show error
+        const iframe = document.getElementById(iframeId);
+        const loadingDiv = document.getElementById(`${iframeId}_loading`);
+        const errorDiv = document.getElementById(`${iframeId}_error`);
+        
+        if (loadingDiv) {
+            loadingDiv.style.display = 'none';
+        }
+        
+        if (iframe) {
+            iframe.style.display = 'none';
+        }
+        
+        if (errorDiv) {
+            errorDiv.style.display = 'flex';
+        }
+        
+        console.error(`Failed to load iframe: ${src}`);
+    }
+
+    retryIframe(iframeId, src) {
+        // Show loading, hide error, and retry loading the iframe
+        const iframe = document.getElementById(iframeId);
+        const loadingDiv = document.getElementById(`${iframeId}_loading`);
+        const errorDiv = document.getElementById(`${iframeId}_error`);
+        
+        if (errorDiv) {
+            errorDiv.style.display = 'none';
+        }
+        
+        if (loadingDiv) {
+            loadingDiv.style.display = 'flex';
+        }
+        
+        if (iframe) {
+            iframe.style.display = 'none';
+            // Force reload by changing src
+            iframe.src = '';
+            setTimeout(() => {
+                iframe.src = src;
+            }, 100);
+        }
     }
 }
 
