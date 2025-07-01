@@ -54,6 +54,7 @@ set -e
                     [script_path, self.mcp_server_path, api_key],
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
                     timeout=30
                 )
                 
@@ -181,6 +182,7 @@ set -e
                     [script_path, self.mcp_server_path, api_key, json.dumps(tool_request)],
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
                     timeout=60
                 )
                 

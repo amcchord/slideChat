@@ -400,11 +400,13 @@ class ClaudeChatClient {
                                         contentDiv.innerHTML = this.renderMarkdown(fullContent);
                                         this.scrollToBottom();
                                         
-                                    } else if (data.type === 'artifacts_update') {
-                                        this.updateStreamingArtifacts(data.content);
-                                        
-                                    } else if (data.type === 'artifacts_remove') {
-                                        this.removeArtifacts(data.content);
+                                                        } else if (data.type === 'artifacts_update') {
+                        this.updateStreamingArtifacts(data.content);
+                        // Reset timeout when artifact updates are received to prevent timeout during long artifact generation
+                        this.resetTimeoutWarning();
+                        
+                    } else if (data.type === 'artifacts_remove') {
+                        this.removeArtifacts(data.content);
                                     }
                                     
                                     if (data.type === 'artifact_save_error') {
@@ -745,6 +747,17 @@ class ClaudeChatClient {
                                         Retry
                                     </button>
                                 </div>
+                                <script>
+                                    // Set a timeout to check if iframe loaded properly
+                                    setTimeout(() => {
+                                        const iframe = document.getElementById('${iframeId}');
+                                        const loading = document.getElementById('${iframeId}_loading');
+                                        if (iframe && loading && loading.style.display !== 'none') {
+                                            // Still showing loading after 10 seconds - treat as error
+                                            window.claudeChat.handleIframeError('${iframeId}', '${artifact.permalink}');
+                                        }
+                                    }, 10000);
+                                </script>
                             </div>
                         `;
                     } else {
@@ -793,6 +806,17 @@ class ClaudeChatClient {
                                         Retry
                                     </button>
                                 </div>
+                                <script>
+                                    // Set a timeout to check if iframe loaded properly
+                                    setTimeout(() => {
+                                        const iframe = document.getElementById('${iframeId}');
+                                        const loading = document.getElementById('${iframeId}_loading');
+                                        if (iframe && loading && loading.style.display !== 'none') {
+                                            // Still showing loading after 10 seconds - treat as error
+                                            window.claudeChat.handleIframeError('${iframeId}', '${artifact.permalink}');
+                                        }
+                                    }, 10000);
+                                </script>
                             </div>
                         `;
                     } else {
@@ -892,8 +916,11 @@ class ClaudeChatClient {
         const elapsedTime = Math.floor((Date.now() - this.responseStartTime) / 1000);
         
         if (hasIncompleteArtifacts) {
-            // If artifacts are being built, show a different status message
+            // If artifacts are being built, show a different status message and be more patient
             this.setStatus('thinking', `Claude is building.. (${elapsedTime}s)`);
+            
+            // Don't show timeout warning for artifact generation, just status update
+            // Artifacts can take longer than normal responses
         } else {
             // Show the usual timeout warning only if no artifacts are being built
             this.setStatus('thinking', `Claude is slow... (${elapsedTime}s)`);
@@ -929,7 +956,20 @@ class ClaudeChatClient {
     }
     
     handleTimeout(rejectCallback) {
-        console.error('Request timed out after', this.responseTimeout / 1000, 'seconds');
+        // Check if Claude is currently working on artifacts - be more patient
+        const hasIncompleteArtifacts = this.artifacts.some(artifact => artifact.complete === false);
+        const elapsedTime = Date.now() - this.responseStartTime;
+        
+        if (hasIncompleteArtifacts && elapsedTime < 300000) { // 5 minutes for artifact generation
+            console.log('Extending timeout for artifact generation...');
+            // Reset timeout for artifact generation with extended time
+            this.timeoutId = setTimeout(() => {
+                this.handleTimeout(rejectCallback);
+            }, 180000); // Additional 3 minutes
+            return;
+        }
+        
+        console.error('Request timed out after', elapsedTime / 1000, 'seconds');
         
         // Cancel the request
         if (this.currentAbortController) {
@@ -1549,6 +1589,20 @@ class ClaudeChatClient {
         const errorDiv = document.getElementById(`${iframeId}_error`);
         
         if (iframe && loadingDiv) {
+            // Check if iframe loaded a problematic URL (about:blank, about:srcdoc, etc.)
+            const iframeSrc = iframe.contentWindow?.location?.href || iframe.src || '';
+            const isProblematicUrl = iframeSrc.startsWith('about:') || 
+                                   iframeSrc === '' || 
+                                   iframeSrc === 'about:blank' ||
+                                   iframeSrc.includes('about:srcdoc');
+            
+            if (isProblematicUrl) {
+                // Treat this as an error instead of successful load
+                console.warn(`Iframe loaded problematic URL: ${iframeSrc}`);
+                this.handleIframeError(iframeId, iframeSrc);
+                return;
+            }
+            
             loadingDiv.style.display = 'none';
             iframe.style.display = 'block';
             
@@ -1574,6 +1628,34 @@ class ClaudeChatClient {
         }
         
         if (errorDiv) {
+            // Customize error message based on the type of failure
+            let errorMessage = 'Failed to load HTML artifact';
+            let errorDetails = '';
+            
+            if (src.startsWith('about:')) {
+                errorMessage = 'Artifact Generation Failed';
+                errorDetails = 'The artifact could not be properly generated or saved. This usually indicates a server-side processing error.';
+            } else if (src.includes('404') || src.includes('not-found')) {
+                errorMessage = 'Artifact Not Found';
+                errorDetails = 'The artifact file was not saved properly or has been removed.';
+            } else if (src.includes('500') || src.includes('error')) {
+                errorMessage = 'Server Error';
+                errorDetails = 'There was a server error while processing the artifact.';
+            } else {
+                errorDetails = `URL: ${src}`;
+            }
+            
+            // Update error content if we have better details
+            if (errorDetails) {
+                const errorContent = errorDiv.querySelector('div:nth-child(2)');
+                if (errorContent) {
+                    errorContent.innerHTML = `
+                        <strong>${errorMessage}</strong><br>
+                        <small style="color: #666; font-size: 0.9em;">${errorDetails}</small>
+                    `;
+                }
+            }
+            
             errorDiv.style.display = 'flex';
         }
         
