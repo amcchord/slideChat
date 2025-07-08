@@ -20,6 +20,15 @@ class ClaudeChatClient {
         // Streaming state for scroll behavior
         this.isStreaming = false;
         
+        // Context window monitoring
+        this.contextCheckInterval = null;
+        this.contextStatus = {
+            usage_percentage: 0,
+            status: 'normal',
+            tokens_used: 0,
+            tokens_limit: 200000
+        };
+        
         this.initializeElements();
         this.setupEventListeners();
         this.initializeTime();
@@ -29,6 +38,12 @@ class ClaudeChatClient {
         this.loadApiKey().catch(error => {
             console.error('Error loading API key on startup:', error);
         });
+        
+        // Initialize context usage indicator
+        this.resetContextUsageIndicator();
+        
+        // Start context monitoring
+        this.startContextMonitoring();
     }
     
     initializeElements() {
@@ -41,6 +56,10 @@ class ClaudeChatClient {
         this.clearArtifactsBtn = document.getElementById('clear-artifacts');
         this.characterCount = document.querySelector('.character-count');
         this.loadingOverlay = document.getElementById('loading-overlay');
+        
+        // Context usage elements
+        this.contextUsageIndicator = document.getElementById('context-usage-indicator');
+        this.contextUsageText = document.getElementById('context-usage-text');
         
         // API Key elements
         this.apiKeyButton = document.getElementById('api-key-button');
@@ -118,6 +137,14 @@ class ClaudeChatClient {
                 this.currentEventSource.close();
             }
         });
+        
+        // Context indicator click
+        if (this.contextUsageIndicator) {
+            this.contextUsageIndicator.addEventListener('click', () => {
+                this.showContextModal();
+            });
+            this.contextUsageIndicator.style.cursor = 'pointer';
+        }
     }
     
     generateSessionId() {
@@ -130,6 +157,11 @@ class ClaudeChatClient {
         if (welcomeTime) {
             welcomeTime.textContent = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         }
+        
+        // Calculate initial context usage including welcome message
+        setTimeout(() => {
+            this.updateContextUsageFromEstimate();
+        }, 100); // Small delay to ensure DOM is ready
     }
     
     configureMarkdown() {
@@ -211,6 +243,10 @@ class ClaudeChatClient {
         this.processedToolIds.clear();
         this.pendingAfterToolContent = null;
         
+        // Reset context usage indicator for new conversation
+        // (it will be updated if/when context status messages are received)
+        this.resetContextUsageIndicator();
+        
         // Add user message to chat
         this.addMessage('user', message);
         
@@ -237,6 +273,8 @@ class ClaudeChatClient {
             // Clear streaming state and ensure timeout cleanup
             this.isStreaming = false;
             this.cleanupTimeouts();
+            // Update context status immediately after message completion
+            this.checkContextStatus();
         }
     }
     
@@ -269,7 +307,114 @@ class ClaudeChatClient {
         this.chatMessages.appendChild(messageDiv);
         this.scrollToBottom(true); // Force scroll when adding new messages
         
+        // Update context usage indicator immediately after adding message
+        this.updateContextUsageFromEstimate();
+        
+        // Also check actual context status from server (but don't wait for it)
+        this.checkContextStatus();
+        
         return messageDiv;
+    }
+    
+    addContextStatusMessage(content) {
+        // Parse context usage from the message content
+        this.updateContextUsageIndicator(content);
+        
+        // Check if we already have a context status message and update it instead
+        let existingStatus = document.querySelector('.context-status-message');
+        
+        if (existingStatus) {
+            // Update existing message
+            const contentDiv = existingStatus.querySelector('.message-content');
+            contentDiv.innerHTML = this.escapeHtml(content);
+            
+            // Add a brief highlight animation to show it's been updated
+            existingStatus.style.backgroundColor = 'var(--background-highlight)';
+            setTimeout(() => {
+                existingStatus.style.backgroundColor = '';
+            }, 1000);
+        } else {
+            // Create new context status message
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message context-status-message';
+            
+            const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <span class="message-sender">📊 Context Manager</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-content">
+                    ${this.escapeHtml(content)}
+                </div>
+            `;
+            
+            this.chatMessages.appendChild(messageDiv);
+        }
+        
+        this.scrollToBottom();
+    }
+    
+    updateContextUsageIndicator(statusMessage) {
+        // Extract percentage from status message (e.g., "Context 75% used")
+        const percentageMatch = statusMessage.match(/(\d+(?:\.\d+)?)%/);
+        
+        if (percentageMatch) {
+            const percentage = parseFloat(percentageMatch[1]);
+            this.setContextUsage(percentage);
+        } else if (statusMessage.includes('Context window')) {
+            // Show indicator even if we can't parse percentage
+            this.contextUsageText.textContent = '⚠️';
+            this.contextUsageIndicator.title = statusMessage;
+        }
+    }
+    
+    setContextUsage(percentage) {
+        // Update the context usage display
+        this.contextUsageText.textContent = `${Math.round(percentage)}%`;
+        
+        // Update indicator styling based on usage level
+        this.contextUsageIndicator.className = 'context-usage-indicator';
+        if (percentage >= 90) {
+            this.contextUsageIndicator.classList.add('critical');
+            this.contextUsageIndicator.title = `Context window ${percentage}% full - Critical level`;
+        } else if (percentage >= 70) {
+            this.contextUsageIndicator.classList.add('warning');
+            this.contextUsageIndicator.title = `Context window ${percentage}% full - Warning level`;
+        } else {
+            this.contextUsageIndicator.title = `Context window ${percentage}% full`;
+        }
+    }
+    
+    estimateContextUsage() {
+        // Estimate context usage based on current conversation
+        const messages = document.querySelectorAll('.message');
+        if (messages.length === 0) return 0;
+        
+        let totalChars = 0;
+        messages.forEach(message => {
+            const content = message.querySelector('.message-content');
+            if (content) {
+                totalChars += content.textContent.length;
+            }
+        });
+        
+        // Rough estimation: 200,000 tokens = ~700,000 chars
+        // This is a very rough approximation
+        const estimatedTokens = totalChars / 3.5;
+        const maxTokens = 200000; // Claude Sonnet 4 context window
+        const percentage = Math.min((estimatedTokens / maxTokens) * 100, 100);
+        
+        return percentage;
+    }
+    
+    updateContextUsageFromEstimate() {
+        // Update context usage indicator based on estimated usage
+        const estimatedUsage = this.estimateContextUsage();
+        if (estimatedUsage > 0) {
+            this.setContextUsage(estimatedUsage);
+        }
     }
     
     addTypingIndicator() {
@@ -400,13 +545,24 @@ class ClaudeChatClient {
                                         contentDiv.innerHTML = this.renderMarkdown(fullContent);
                                         this.scrollToBottom();
                                         
-                                                        } else if (data.type === 'artifacts_update') {
-                        this.updateStreamingArtifacts(data.content);
-                        // Reset timeout when artifact updates are received to prevent timeout during long artifact generation
-                        this.resetTimeoutWarning();
-                        
-                    } else if (data.type === 'artifacts_remove') {
-                        this.removeArtifacts(data.content);
+                                    } else if (data.type === 'context_status') {
+                                        // Handle context status messages
+                                        this.addContextStatusMessage(data.content);
+                                        
+                                    } else if (data.type === 'context_percentage') {
+                                        // Handle context percentage updates for indicator
+                                        this.updateContextIndicatorFromStatus({
+                                            usage_percentage: data.percentage,
+                                            status: this.getContextStatusFromPercentage(data.percentage)
+                                        });
+                                        
+                                    } else if (data.type === 'artifacts_update') {
+                                        this.updateStreamingArtifacts(data.content);
+                                        // Reset timeout when artifact updates are received to prevent timeout during long artifact generation
+                                        this.resetTimeoutWarning();
+                                        
+                                    } else if (data.type === 'artifacts_remove') {
+                                        this.removeArtifacts(data.content);
                                     }
                                     
                                     if (data.type === 'artifact_save_error') {
@@ -864,6 +1020,15 @@ class ClaudeChatClient {
     clearArtifacts() {
         this.artifacts = [];
         this.renderArtifacts();
+        // Update context usage after clearing
+        this.updateContextUsageFromEstimate();
+    }
+    
+    resetContextUsageIndicator() {
+        // Reset the context usage indicator to 0%
+        this.contextUsageText.textContent = '0%';
+        this.contextUsageIndicator.className = 'context-usage-indicator';
+        this.contextUsageIndicator.title = 'Context window usage';
     }
     
     // Timeout and error handling methods
@@ -1730,6 +1895,179 @@ class ClaudeChatClient {
         
         this.addMessage('system', errorMessage);
         console.error('Artifact processing error:', errorData);
+    }
+    
+    startContextMonitoring() {
+        // Check context status every 10 seconds (reduced from 30)
+        this.contextCheckInterval = setInterval(() => {
+            this.checkContextStatus();
+        }, 10000);
+        
+        // Initial check
+        this.checkContextStatus();
+    }
+    
+    async checkContextStatus() {
+        try {
+            const url = `/context/status?session_id=${this.sessionId}`;
+            const response = await fetch(url);
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.contextStatus = data;
+                this.updateContextIndicatorFromStatus(data);
+            }
+        } catch (error) {
+            console.error('Error checking context status:', error);
+        }
+    }
+    
+    updateContextIndicatorFromStatus(status) {
+        const percentage = status.usage_percentage || 0;
+        const statusClass = status.status || 'normal';
+        
+        // Update the context usage display
+        this.contextUsageText.textContent = `${Math.round(percentage)}%`;
+        
+        // Update indicator styling based on usage level
+        this.contextUsageIndicator.className = 'context-usage-indicator';
+        if (statusClass === 'critical') {
+            this.contextUsageIndicator.classList.add('critical');
+            this.contextUsageIndicator.title = `Context window ${percentage}% full - Critical level`;
+        } else if (statusClass === 'warning' || statusClass === 'caution') {
+            this.contextUsageIndicator.classList.add('warning');
+            this.contextUsageIndicator.title = `Context window ${percentage}% full - Warning level`;
+        } else {
+            this.contextUsageIndicator.title = `Context window ${percentage}% full`;
+        }
+    }
+    
+    showContextModal() {
+        const modal = document.getElementById('context-modal');
+        if (!modal) return;
+        
+        // Update stats
+        const statsDiv = document.getElementById('context-stats');
+        const status = this.contextStatus;
+        
+        statsDiv.innerHTML = `
+            <div class="context-modal-stats">
+                <div class="stat-item">
+                    <div class="stat-label">Usage</div>
+                    <div class="stat-value ${status.status}">${status.usage_percentage}%</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Tokens Used</div>
+                    <div class="stat-value">${status.tokens_used?.toLocaleString() || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Tokens Remaining</div>
+                    <div class="stat-value">${status.tokens_remaining?.toLocaleString() || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Messages</div>
+                    <div class="stat-value">${status.message_count || 0}</div>
+                </div>
+            </div>
+            <div class="context-modal-bar">
+                <div class="context-modal-fill ${status.status}" style="width: ${status.usage_percentage}%"></div>
+            </div>
+            <div class="context-modal-info">
+                ${this.getContextStrategyInfo(status)}
+            </div>
+        `;
+        
+        modal.style.display = 'block';
+    }
+    
+    getContextStrategyInfo(status) {
+        if (status.status === 'critical') {
+            return '<p class="warning">⚠️ Context window is critically full. Older messages are being summarized to maintain conversation flow.</p>';
+        } else if (status.status === 'warning') {
+            return '<p class="caution">📊 Context usage is high. Consider optimizing to prevent message loss.</p>';
+        } else if (status.status === 'caution') {
+            return '<p class="info">💡 Context usage is moderate. You have plenty of room for conversation.</p>';
+        } else {
+            return '<p class="success">✅ Context usage is low. You have plenty of room for conversation.</p>';
+        }
+    }
+    
+    closeContextModal() {
+        const modal = document.getElementById('context-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+    
+    async clearOldMessages() {
+        if (!confirm('Are you sure you want to clear old messages? This will remove the oldest messages from the conversation to free up context space.')) {
+            return;
+        }
+        
+        try {
+            // For now, we'll just refresh the context status
+            // In a real implementation, you'd have a separate endpoint to clear messages
+            await this.optimizeContext();
+        } catch (error) {
+            console.error('Error clearing messages:', error);
+            alert('Failed to clear messages. Please try again.');
+        }
+    }
+    
+    async optimizeContext() {
+        try {
+            const response = await fetch('/chat/optimize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: this.sessionId
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.addSystemMessage(`Context optimized: ${data.message}`);
+                await this.checkContextStatus();
+                this.closeContextModal();
+            }
+        } catch (error) {
+            console.error('Error optimizing context:', error);
+            alert('Failed to optimize context. Please try again.');
+        }
+    }
+    
+    addSystemMessage(content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message system-message';
+        
+        const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        messageDiv.innerHTML = `
+            <div class="message-header">
+                <span class="message-sender">System</span>
+                <span class="message-time">${time}</span>
+            </div>
+            <div class="message-content">
+                ${this.escapeHtml(content)}
+            </div>
+        `;
+        
+        this.chatMessages.appendChild(messageDiv);
+        this.scrollToBottom();
+    }
+    
+    getContextStatusFromPercentage(percentage) {
+        if (percentage >= 90) {
+            return 'critical';
+        } else if (percentage >= 80) {
+            return 'warning';
+        } else if (percentage >= 70) {
+            return 'caution';
+        } else {
+            return 'normal';
+        }
     }
 }
 

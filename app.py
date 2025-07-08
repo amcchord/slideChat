@@ -12,9 +12,15 @@ from mcp_manager import mcp_manager
 from haml_processor import convert_haml_to_html
 import tempfile
 import time
+from context_manager import ContextManager
 
 # Application version
 VERSION = "1.1.0"
+
+# Claude model configuration
+CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+MAX_TOKENS = 16000  # Keep current max tokens for responses
+CONTEXT_WINDOW = 200000  # Approximate context window for Claude Sonnet 4
 
 # Load environment variables
 load_dotenv()
@@ -269,6 +275,18 @@ claude_client = None  # Initialize lazily to avoid startup issues
 
 # Global variables for session management
 chat_sessions = {}
+context_managers = {}  # Store context manager per session
+
+def get_session_context_manager(session_id: str) -> ContextManager:
+    """Get or create a context manager for a specific session"""
+    if session_id not in context_managers:
+        context_managers[session_id] = ContextManager(
+            context_window=CONTEXT_WINDOW,
+            warning_threshold=0.7,
+            soft_limit_threshold=0.8,
+            hard_limit_threshold=0.9
+        )
+    return context_managers[session_id]
 
 def stream_claude_response(messages, session_id=None, slide_api_key=None):
     """Direct HTTP streaming to Claude API with proper MCP tool integration"""
@@ -656,6 +674,35 @@ def chat():
             'message_preview': message[:100] + '...' if len(message) > 100 else message
         })
         
+        # Apply context management to session messages
+        context_manager = get_session_context_manager(session_id)
+        session_messages = chat_sessions[session_id]
+        
+        # Create a simple system message for context management
+        system_message_preview = "You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems."
+        
+        managed_messages, management_info = context_manager.manage_context(session_messages, system_message_preview)
+        
+        # Update session with managed messages if optimization was applied
+        if management_info['action'] != 'none':
+            chat_sessions[session_id] = managed_messages
+            log_session_interaction(session_id, 'context_management', management_info)
+        
+        # Get context status information 
+        state = context_manager.get_context_state(session_messages, system_message_preview)
+        status_msg = context_manager.get_context_status_message(state)
+        context_status_to_send = None
+        context_percentage = None
+        
+        # Always send context percentage for frontend indicator
+        if state and 'usage_percentage' in state:
+            context_percentage = state['usage_percentage']
+        
+        # Send context status message if there's a warning
+        if status_msg:
+            log_session_interaction(session_id, 'context_status', {'message': status_msg, 'state': state})
+            context_status_to_send = status_msg
+        
         # Capture request context data before entering generator
         user_agent = request.headers.get('User-Agent', 'Unknown')
         ip_address = request.remote_addr
@@ -666,13 +713,24 @@ def chat():
             response_content = ""  # Initialize outside try block for error handling
             
             try:
-                # Prepare messages for Claude API
+                # Get the session context manager for this session
+                context_manager = get_session_context_manager(session_id)
+                
+                # Prepare messages for Claude API using managed messages
                 for msg in chat_sessions[session_id]:
                     if msg['role'] in ['user', 'assistant']:
                         messages.append({
                             'role': msg['role'],
                             'content': msg['content']
                         })
+                
+                # Send context status message if available 
+                if context_status_to_send:
+                    yield f"data: {json.dumps({'type': 'context_status', 'content': context_status_to_send})}\n\n"
+                
+                # Always send context percentage for indicator
+                if context_percentage is not None:
+                    yield f"data: {json.dumps({'type': 'context_percentage', 'percentage': context_percentage})}\n\n"
                 
                 # Stream response from Claude using direct API with real-time artifact detection
                 current_artifacts = {}  # Track ongoing artifacts by their start position
@@ -802,6 +860,11 @@ def chat():
                     'content': assistant_content,
                     'timestamp': datetime.now().isoformat()
                 })
+                
+                # Send updated context percentage after adding assistant message
+                updated_state = context_manager.get_context_state(chat_sessions[session_id], system_message_preview)
+                if updated_state and 'usage_percentage' in updated_state:
+                    yield f"data: {json.dumps({'type': 'context_percentage', 'percentage': updated_state['usage_percentage']})}\n\n"
                 
                 # Log successful completion
                 log_session_interaction(session_id, 'response_completed', {
@@ -1370,6 +1433,103 @@ def mcp_server_status():
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting MCP server status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/context/status')
+def context_status():
+    """Get context window usage for a session"""
+    try:
+        session_id = request.args.get('session_id', 'default')
+        
+        # System message for context calculation
+        system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+
+Your primary purpose is to help users manage, monitor, and troubleshoot their Slide backup solutions.
+
+Key capabilities:
+- Query backup status and health metrics
+- Monitor virtualization and replication status
+- Analyze backup schedules and retention policies
+- Troubleshoot backup failures and performance issues
+- Generate reports on backup coverage and compliance
+- Provide guidance on disaster recovery procedures
+
+You have access to real-time data from Slide devices through integrated MCP tools."""
+        
+        if session_id not in chat_sessions:
+            return jsonify({
+                'session_id': session_id,
+                'tokens_used': 0,
+                'tokens_limit': CONTEXT_WINDOW,
+                'usage_percentage': 0,
+                'message_count': 0,
+                'status': 'empty',
+                'strategy': 'none',
+                'tokens_remaining': CONTEXT_WINDOW
+            })
+        
+        # Get context manager and calculate state
+        context_manager = get_session_context_manager(session_id)
+        session_messages = chat_sessions[session_id]
+        state = context_manager.get_context_state(session_messages, system_message)
+        
+        return jsonify({
+            'session_id': session_id,
+            **state
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting context status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/chat/optimize', methods=['POST'])
+def optimize_context():
+    """Manually trigger context optimization for a session"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        
+        if session_id not in chat_sessions:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        # Get context manager
+        context_manager = get_session_context_manager(session_id)
+        
+        # System message for context calculation
+        system_message = """You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+
+Your primary purpose is to help users manage, monitor, and troubleshoot their Slide backup solutions.
+
+Key capabilities:
+- Query backup status and health metrics
+- Monitor virtualization and replication status
+- Analyze backup schedules and retention policies
+- Troubleshoot backup failures and performance issues
+- Generate reports on backup coverage and compliance
+- Provide guidance on disaster recovery procedures
+
+You have access to real-time data from Slide devices through integrated MCP tools."""
+        
+        # Force optimization
+        current_messages = chat_sessions[session_id]
+        optimized_messages, management_info = context_manager.manage_context(
+            current_messages, 
+            system_message
+        )
+        
+        # Update session
+        chat_sessions[session_id] = optimized_messages
+        
+        # Log the action
+        log_session_interaction(session_id, 'context_optimized', management_info)
+        
+        return jsonify({
+            'message': f"Removed {management_info['removed']} messages, created {management_info.get('summarized', 0)} summaries",
+            'management_info': management_info
+        })
+        
+    except Exception as e:
+        logger.error(f"Error optimizing context: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/logs/status')
