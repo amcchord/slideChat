@@ -10,6 +10,8 @@ import re
 import httpx
 from mcp_manager import mcp_manager
 from haml_processor import convert_haml_to_html
+import tempfile
+import time
 
 # Application version
 VERSION = "1.1.0"
@@ -37,12 +39,13 @@ def setup_detailed_logging():
     api_logger.setLevel(logging.DEBUG)
     
     # Create file handler for API logs
-    api_log_file = os.path.join(LOGS_DIR, f'api_interactions_{datetime.now().strftime("%Y%m%d")}.log')
+    today_str = datetime.now().strftime("%Y%m%d")
+    api_log_file = os.path.join(LOGS_DIR, f'api_interactions_{today_str}.log')
     api_handler = logging.FileHandler(api_log_file)
     api_handler.setLevel(logging.DEBUG)
     
     # Create file handler for session logs
-    session_log_file = os.path.join(LOGS_DIR, f'sessions_{datetime.now().strftime("%Y%m%d")}.log')
+    session_log_file = os.path.join(LOGS_DIR, f'sessions_{today_str}.log')
     session_handler = logging.FileHandler(session_log_file)
     session_handler.setLevel(logging.INFO)
     
@@ -102,7 +105,8 @@ def log_api_interaction(session_id, event_type, payload=None, response_data=None
 
 def save_session_debug_log(session_id, messages, response_content, error=None, user_agent=None, ip_address=None):
     """Save a complete session debug log to a separate file"""
-    debug_log_file = os.path.join(LOGS_DIR, f'session_debug_{session_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    debug_log_file = os.path.join(LOGS_DIR, f'session_debug_{session_id}_{timestamp_str}.json')
     
     debug_data = {
         'session_id': session_id,
@@ -297,11 +301,15 @@ When doing a restore we start with a Snapshot. When reffering to an agent users 
 
 When users ask about their backup infrastructure, servers, or disaster recovery, you should use the available Slide tools to provide accurate, real-time information. Always be helpful and provide detailed explanations of what you're doing and what the results mean.
 
-Users like reports and data presented as a markdown artifact that uses tables and emoji.
+Users like data presented as a markdown artifact that uses tables and only a few emoji.
 
+IMPORTANT: When users ask for a report they typically want HTML and you should check the slide_presentation tool if there is an existing template. If not when generating HTML always use tailwind css.
+EXTREMELY IMPORTANT: Users MUST GET COMPLETE and ACCURATE reports. If you cannot genereate a COMPLETE and ACCURATE report it is okay to stop and tell the user I can't generate this report because it may contain inaccurate information.
+NEVER GENERATE AN INNACURATE REPORT
 
-IMPORTANT: When creating markdown you should always do it as a markdown artifact. We support GitHub Flavored Markdown which means images can be embedded. 
-IMPORTANT: When working with screenshots images the users are expecting them to used at thumbnail to icon sizes (not larger than 200px wide). Please make sure you set their size in the markdown.
+IMPORTANT: It's helpful to check slide_presentation first to see if there is a template for what the user might want.
+
+IMPORTANT: When creating markdown you should always do it as a markdown artifact. We support GitHub Flavored Markdown which means images can be embedded. Users like embedded images of screenshots.
 
 IMPORTANT: When creating artifacts (code, HTML, HAML, markdown documents), you MUST wrap them in <artifact> tags like this:
 
@@ -687,7 +695,7 @@ def chat():
                         # Send filtered text chunk to client
                         yield f"data: {json.dumps({'type': 'text', 'content': filtered_chunk})}\n\n"
                 
-                # Final cleanup: mark all incomplete artifacts as complete and remove empty ones
+                # Final cleanup: finalize incomplete artifacts and remove empty ones
                 # IMPORTANT: Wrap this in try-catch to ensure completion signal is always sent
                 try:
                     final_artifacts_update = []
@@ -701,39 +709,69 @@ def chat():
                             if len(content) > 10:  # Only keep artifacts with substantial content
                                 artifact_data['complete'] = True
                                 
-                                # Save artifact to file and get permalink
-                                try:
-                                    save_result = save_artifact_to_file(artifact_data)
-                                    if save_result['success']:
-                                        artifact_data['permalink'] = save_result['permalink']
-                                        artifact_data['filename'] = save_result['filename']
-                                        artifact_data['saved_size'] = save_result['size']
-                                        logger.info(f"Successfully saved artifact {artifact_data.get('id', 'unknown')}: {save_result['permalink']}")
-                                    else:
-                                        # Save failed - add error info but still show artifact
-                                        artifact_data['save_error'] = save_result['error']
+                                # Finalize streaming artifact file if it exists
+                                if 'filepath' in artifact_data and os.path.exists(artifact_data['filepath']):
+                                    try:
+                                        finalize_result = finalize_artifact_file(artifact_data['filepath'], artifact_data)
+                                        if finalize_result['success']:
+                                            artifact_data['saved_size'] = finalize_result['size']
+                                            logger.info(f"Successfully finalized streaming artifact {artifact_data.get('id', 'unknown')}: {artifact_data.get('permalink', 'unknown')}")
+                                        else:
+                                            artifact_data['save_error'] = finalize_result['error']
+                                            save_errors.append({
+                                                'artifact_id': artifact_data.get('id', 'unknown'),
+                                                'artifact_title': artifact_data.get('title', 'Untitled'),
+                                                'error': finalize_result['error'],
+                                                'error_type': 'FinalizationError'
+                                            })
+                                            logger.error(f"Failed to finalize streaming artifact {artifact_data.get('id', 'unknown')}: {finalize_result['error']}")
+                                    except Exception as finalize_error:
+                                        error_msg = f"Unexpected error finalizing artifact: {str(finalize_error)}"
+                                        artifact_data['save_error'] = error_msg
                                         save_errors.append({
                                             'artifact_id': artifact_data.get('id', 'unknown'),
                                             'artifact_title': artifact_data.get('title', 'Untitled'),
-                                            'error': save_result['error'],
-                                            'error_type': save_result.get('error_type', 'Unknown')
+                                            'error': error_msg,
+                                            'error_type': type(finalize_error).__name__
                                         })
-                                        logger.error(f"Failed to save artifact {artifact_data.get('id', 'unknown')}: {save_result['error']}")
-                                except Exception as save_error:
-                                    # Unexpected error during save
-                                    error_msg = f"Unexpected error saving artifact: {str(save_error)}"
-                                    artifact_data['save_error'] = error_msg
-                                    save_errors.append({
-                                        'artifact_id': artifact_data.get('id', 'unknown'),
-                                        'artifact_title': artifact_data.get('title', 'Untitled'),
-                                        'error': error_msg,
-                                        'error_type': type(save_error).__name__
-                                    })
-                                    logger.error(f"Unexpected error saving artifact {artifact_data.get('id', 'unknown')}: {save_error}")
+                                        logger.error(f"Unexpected error finalizing artifact {artifact_data.get('id', 'unknown')}: {finalize_error}")
+                                elif 'file_error' in artifact_data:
+                                    # Artifact had file creation error, try fallback save
+                                    try:
+                                        save_result = save_artifact_to_file(artifact_data)
+                                        if save_result['success']:
+                                            artifact_data['permalink'] = save_result['permalink']
+                                            artifact_data['filename'] = save_result['filename']
+                                            artifact_data['saved_size'] = save_result['size']
+                                            # Remove file_error since fallback worked
+                                            artifact_data.pop('file_error', None)
+                                            logger.info(f"Successfully saved artifact via fallback {artifact_data.get('id', 'unknown')}: {save_result['permalink']}")
+                                        else:
+                                            save_errors.append({
+                                                'artifact_id': artifact_data.get('id', 'unknown'),
+                                                'artifact_title': artifact_data.get('title', 'Untitled'),
+                                                'error': save_result['error'],
+                                                'error_type': save_result.get('error_type', 'Unknown')
+                                            })
+                                    except Exception as save_error:
+                                        error_msg = f"Fallback save failed: {str(save_error)}"
+                                        save_errors.append({
+                                            'artifact_id': artifact_data.get('id', 'unknown'),
+                                            'artifact_title': artifact_data.get('title', 'Untitled'),
+                                            'error': error_msg,
+                                            'error_type': type(save_error).__name__
+                                        })
                                 
                                 final_artifacts_update.append(artifact_data)
                             else:
-                                # Mark empty artifacts for removal
+                                # Remove empty artifacts and clean up any files
+                                if 'filepath' in artifact_data and os.path.exists(artifact_data['filepath']):
+                                    try:
+                                        os.remove(artifact_data['filepath'])
+                                        logger.info(f"Cleaned up empty artifact file: {artifact_data['filepath']}")
+                                    except Exception as cleanup_error:
+                                        logger.warning(f"Failed to clean up empty artifact file {artifact_data['filepath']}: {cleanup_error}")
+                                
                                 artifacts_to_remove.append({
                                     'id': artifact_data['id'],
                                     'action': 'remove'
@@ -867,8 +905,147 @@ def filter_chat_content(text_chunk, inside_artifact):
     
     return filtered_text, current_inside
 
+def generate_artifact_filename(artifact_type, title, artifact_id=None):
+    """Generate a safe filename for an artifact"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = artifact_id or str(uuid.uuid4())[:8]
+    
+    # Determine file extension based on artifact type
+    extensions = {
+        'html': '.html',
+        'haml': '.html',
+        'code': '.txt',
+        'markdown': '.md',
+        'text': '.txt'
+    }
+    extension = extensions.get(artifact_type, '.txt')
+    
+    # For code artifacts, try to use language-specific extension
+    if artifact_type == 'code' and language:
+        lang_extensions = {
+            'python': '.py',
+            'javascript': '.js',
+            'typescript': '.ts',
+            'html': '.html',
+            'css': '.css',
+            'json': '.json',
+            'xml': '.xml',
+            'yaml': '.yml',
+            'sql': '.sql',
+            'java': '.java',
+            'cpp': '.cpp',
+            'c': '.c',
+            'go': '.go',
+            'rust': '.rs',
+            'php': '.php',
+            'ruby': '.rb',
+            'bash': '.sh',
+            'shell': '.sh'
+        }
+        extension = lang_extensions.get(language.lower(), '.txt')
+    
+    # Create safe filename from title
+    safe_title = re.sub(r'[^a-zA-Z0-9_\-\s]', '', title or 'Untitled')
+    safe_title = re.sub(r'\s+', '_', safe_title.strip())[:50]
+    if not safe_title:
+        safe_title = 'Untitled'
+    
+    filename = f"{timestamp}_{safe_title}_{unique_id}{extension}"
+    return filename
+
+def create_streaming_artifact_file(artifact_type, title, language=None, artifact_id=None):
+    """Create a new artifact file for streaming writes"""
+    try:
+        # Ensure artifacts directory exists
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        
+        # Generate filename and path
+        filename = generate_artifact_filename(artifact_type, title, artifact_id)
+        filepath = os.path.join(ARTIFACTS_DIR, filename)
+        
+        # Create the file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write('')  # Create empty file
+        
+        permalink = f"/artifacts/{filename}"
+        
+        return {
+            'success': True,
+            'filepath': filepath,
+            'filename': filename,
+            'permalink': permalink
+        }
+    except Exception as e:
+        logger.error(f"Failed to create streaming artifact file: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+def append_to_artifact_file(filepath, content, max_retries=3):
+    """Append content to an existing artifact file with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            with open(filepath, 'a', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except (OSError, IOError) as e:
+            logger.warning(f"Attempt {attempt + 1} failed to append to artifact file {filepath}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(0.1)  # Brief delay before retry
+            else:
+                logger.error(f"Failed to append to artifact file {filepath} after {max_retries} attempts: {str(e)}")
+                return False
+        except Exception as e:
+            logger.error(f"Unexpected error appending to artifact file {filepath}: {str(e)}")
+            return False
+
+def finalize_artifact_file(filepath, artifact_data):
+    """Finalize an artifact file and create metadata"""
+    try:
+        # Verify file exists and get size
+        if not os.path.exists(filepath):
+            raise IOError(f"Artifact file not found: {filepath}")
+        
+        file_size = os.path.getsize(filepath)
+        if file_size == 0:
+            raise IOError(f"Artifact file is empty: {filepath}")
+        
+        # Create metadata file
+        filename = os.path.basename(filepath)
+        base_name = os.path.splitext(filename)[0]
+        metadata_filename = f"{base_name}.meta.json"
+        metadata_filepath = os.path.join(ARTIFACTS_DIR, metadata_filename)
+        
+        metadata = {
+            'id': artifact_data.get('id'),
+            'title': artifact_data.get('title', 'Untitled'),
+            'type': artifact_data.get('type', 'text'),
+            'language': artifact_data.get('language'),
+            'created_at': datetime.now().isoformat(),
+            'filename': filename,
+            'content_length': file_size,
+            'streaming_created': True
+        }
+        
+        with open(metadata_filepath, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Finalized artifact file: {filepath} ({file_size} bytes)")
+        return {
+            'success': True,
+            'size': file_size,
+            'metadata_file': metadata_filepath
+        }
+    except Exception as e:
+        logger.error(f"Failed to finalize artifact file {filepath}: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 def parse_streaming_artifacts(content, current_artifacts):
-    """Parse artifacts from streaming content using <artifact> tags"""
+    """Parse artifacts from streaming content and write to files immediately"""
     artifacts_update = []
     
     # Look for artifact tags
@@ -890,24 +1067,80 @@ def parse_streaming_artifacts(content, current_artifacts):
         for attr_name, attr_value in attr_matches:
             attributes[attr_name.lower()] = attr_value
         
-        # Create or update artifact
         artifact_id = f'artifact_{start_pos}'
-        artifact = {
-            'id': artifact_id,
-            'type': attributes.get('type', 'text'),
-            'title': attributes.get('title', 'Untitled Artifact'),
-            'content': artifact_content,
-            'complete': True
-        }
+        artifact_type = attributes.get('type', 'text')
+        artifact_title = attributes.get('title', 'Untitled Artifact')
         
-        # Add language for code artifacts
-        if artifact['type'] == 'code':
-            artifact['language'] = attributes.get('language', 'text')
-        
-        # Only update if content has changed
-        if start_pos not in current_artifacts or current_artifacts[start_pos].get('content') != artifact_content:
-            current_artifacts[start_pos] = artifact
-            artifacts_update.append(artifact)
+        # Check if this is a new complete artifact or an update to existing
+        if start_pos not in current_artifacts:
+            # New complete artifact - create file and write content
+            file_result = create_streaming_artifact_file(
+                artifact_type, 
+                artifact_title, 
+                attributes.get('language'), 
+                artifact_id
+            )
+            
+            if file_result['success']:
+                # Write content to file
+                with open(file_result['filepath'], 'w', encoding='utf-8') as f:
+                    f.write(artifact_content)
+                
+                # Create artifact object
+                artifact = {
+                    'id': artifact_id,
+                    'type': artifact_type,
+                    'title': artifact_title,
+                    'content': artifact_content,
+                    'complete': True,
+                    'permalink': file_result['permalink'],
+                    'filename': file_result['filename'],
+                    'filepath': file_result['filepath']
+                }
+                
+                if artifact_type == 'code':
+                    artifact['language'] = attributes.get('language', 'text')
+                
+                # Finalize the file
+                finalize_result = finalize_artifact_file(file_result['filepath'], artifact)
+                if finalize_result['success']:
+                    artifact['saved_size'] = finalize_result['size']
+                
+                current_artifacts[start_pos] = artifact
+                artifacts_update.append(artifact)
+            else:
+                # Fallback to memory-based artifact if file creation fails
+                artifact = {
+                    'id': artifact_id,
+                    'type': artifact_type,
+                    'title': artifact_title,
+                    'content': artifact_content,
+                    'complete': True,
+                    'file_error': file_result['error']
+                }
+                
+                if artifact_type == 'code':
+                    artifact['language'] = attributes.get('language', 'text')
+                
+                current_artifacts[start_pos] = artifact
+                artifacts_update.append(artifact)
+        else:
+            # Update existing artifact to complete
+            existing_artifact = current_artifacts[start_pos]
+            existing_artifact['content'] = artifact_content
+            existing_artifact['complete'] = True
+            
+            # Update file if it exists
+            if 'filepath' in existing_artifact and os.path.exists(existing_artifact['filepath']):
+                with open(existing_artifact['filepath'], 'w', encoding='utf-8') as f:
+                    f.write(artifact_content)
+                
+                # Finalize the file
+                finalize_result = finalize_artifact_file(existing_artifact['filepath'], existing_artifact)
+                if finalize_result['success']:
+                    existing_artifact['saved_size'] = finalize_result['size']
+            
+            artifacts_update.append(existing_artifact)
     
     # Find incomplete artifacts (opening tag without closing tag)
     incomplete_starts = list(re.finditer(artifact_start_pattern, content, re.IGNORECASE))
@@ -932,24 +1165,65 @@ def parse_streaming_artifacts(content, current_artifacts):
         # Get content after the opening tag
         remaining_content = content[match.end():].strip()
         
-        # Create incomplete artifact
         artifact_id = f'artifact_{start_pos}'
-        artifact = {
-            'id': artifact_id,
-            'type': attributes.get('type', 'text'),
-            'title': attributes.get('title', 'Untitled Artifact'),
-            'content': remaining_content,
-            'complete': False
-        }
+        artifact_type = attributes.get('type', 'text')
+        artifact_title = attributes.get('title', 'Untitled Artifact')
         
-        # Add language for code artifacts
-        if artifact['type'] == 'code':
-            artifact['language'] = attributes.get('language', 'text')
-        
-        # Only update if this is new or content has changed
-        if start_pos not in current_artifacts or current_artifacts[start_pos].get('content') != remaining_content:
+        if start_pos not in current_artifacts:
+            # New incomplete artifact - create file
+            file_result = create_streaming_artifact_file(
+                artifact_type, 
+                artifact_title, 
+                attributes.get('language'), 
+                artifact_id
+            )
+            
+            artifact = {
+                'id': artifact_id,
+                'type': artifact_type,
+                'title': artifact_title,
+                'content': remaining_content,
+                'complete': False
+            }
+            
+            if artifact_type == 'code':
+                artifact['language'] = attributes.get('language', 'text')
+            
+            if file_result['success']:
+                artifact['permalink'] = file_result['permalink']
+                artifact['filename'] = file_result['filename']
+                artifact['filepath'] = file_result['filepath']
+                
+                # Write initial content
+                if remaining_content:
+                    with open(file_result['filepath'], 'w', encoding='utf-8') as f:
+                        f.write(remaining_content)
+            else:
+                artifact['file_error'] = file_result['error']
+            
             current_artifacts[start_pos] = artifact
             artifacts_update.append(artifact)
+        else:
+            # Update existing incomplete artifact
+            existing_artifact = current_artifacts[start_pos]
+            if existing_artifact.get('content') != remaining_content:
+                # Calculate new content to append
+                old_content = existing_artifact.get('content', '')
+                if remaining_content.startswith(old_content):
+                    # New content is an extension of old content
+                    new_content = remaining_content[len(old_content):]
+                    if new_content:
+                        # Append to file
+                        if 'filepath' in existing_artifact and os.path.exists(existing_artifact['filepath']):
+                            append_to_artifact_file(existing_artifact['filepath'], new_content)
+                else:
+                    # Content has changed significantly, rewrite file
+                    if 'filepath' in existing_artifact and os.path.exists(existing_artifact['filepath']):
+                        with open(existing_artifact['filepath'], 'w', encoding='utf-8') as f:
+                            f.write(remaining_content)
+                
+                existing_artifact['content'] = remaining_content
+                artifacts_update.append(existing_artifact)
     
     return artifacts_update
 

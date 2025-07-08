@@ -722,7 +722,7 @@ class ClaudeChatClient {
                         </div>
                     `;
                 } else {
-                    // Use permalink URL as iframe source if available, fallback to srcdoc
+                    // All artifacts should now have permalinks due to streaming file creation
                     if (artifact.permalink) {
                         const iframeId = `iframe_${artifact.id}`;
                         return `
@@ -761,8 +761,20 @@ class ClaudeChatClient {
                             </div>
                         `;
                     } else {
-                        // Fallback to srcdoc if permalink is not available
-                        return `<iframe class="artifact-html" srcdoc="${this.escapeHtml(artifact.content)}" title="${this.escapeHtml(artifact.title || 'HTML Artifact')}"></iframe>`;
+                        // Show error if no permalink is available
+                        return `
+                            <div class="artifact-error">
+                                <div class="error-icon">⚠️</div>
+                                <div class="error-message">
+                                    <strong>HTML Artifact Error</strong><br>
+                                    The HTML artifact could not be saved to a file. ${artifact.file_error || artifact.save_error || 'Unknown error occurred.'}
+                                </div>
+                                <details class="error-details">
+                                    <summary>View HTML Source</summary>
+                                    <pre class="artifact-source-error"><code class="language-html">${this.escapeHtml(artifact.content)}</code></pre>
+                                </details>
+                            </div>
+                        `;
                     }
                 }
                 
@@ -1589,12 +1601,11 @@ class ClaudeChatClient {
         const errorDiv = document.getElementById(`${iframeId}_error`);
         
         if (iframe && loadingDiv) {
-            // Check if iframe loaded a problematic URL (about:blank, about:srcdoc, etc.)
+            // Check if iframe loaded a problematic URL (about:blank, etc.)
             const iframeSrc = iframe.contentWindow?.location?.href || iframe.src || '';
             const isProblematicUrl = iframeSrc.startsWith('about:') || 
                                    iframeSrc === '' || 
-                                   iframeSrc === 'about:blank' ||
-                                   iframeSrc.includes('about:srcdoc');
+                                   iframeSrc === 'about:blank';
             
             if (isProblematicUrl) {
                 // Treat this as an error instead of successful load
