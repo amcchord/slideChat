@@ -36,7 +36,7 @@ set -e
 
 # Initialize MCP session and get tools
 {
-    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.1.0"}}}'
+    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.5.0"}}}'
     echo '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
     echo '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
 } | "$1" --api-key "$2" --tools full-safe 2>/dev/null | grep -E '{"jsonrpc":"2.0","id":2' | head -1
@@ -153,7 +153,7 @@ set -e
 
 # Initialize MCP session and call tool
 {
-    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.1.0"}}}'
+    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.5.0"}}}'
     echo '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
     echo "$3"
 } | "$1" --api-key "$2" --tools full-safe 2>/dev/null | grep -E '{"jsonrpc":"2.0","id":3' | head -1

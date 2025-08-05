@@ -15,7 +15,7 @@ import time
 from context_manager import ContextManager
 
 # Application version
-VERSION = "1.1.0"
+VERSION = "1.5.0"
 
 # Claude model configuration
 CLAUDE_MODEL = 'claude-sonnet-4-20250514'
@@ -24,6 +24,11 @@ CONTEXT_WINDOW = 200000  # Approximate context window for Claude Sonnet 4
 
 # Load environment variables
 load_dotenv()
+
+# Check if running in production
+def is_production():
+    """Check if the application is running in production mode"""
+    return os.environ.get('FLASK_ENV', 'development').lower() == 'production'
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +116,11 @@ def log_api_interaction(session_id, event_type, payload=None, response_data=None
 
 def save_session_debug_log(session_id, messages, response_content, error=None, user_agent=None, ip_address=None):
     """Save a complete session debug log to a separate file"""
+    # Skip debug file creation in production
+    if is_production():
+        logger.debug(f"Skipping debug log creation in production for session: {session_id}")
+        return
+    
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     debug_log_file = os.path.join(LOGS_DIR, f'session_debug_{session_id}_{timestamp_str}.json')
     
@@ -302,7 +312,7 @@ def stream_claude_response(messages, session_id=None, slide_api_key=None):
     
     # Prepare system message with Slide device information
     current_datetime = datetime.utcnow().strftime("%A, %B %d, %Y at %I:%M %p UTC")
-    system_message = f"""You are Claude, an AI assistant integrated with Slide backup and disaster recovery systems. 
+    system_message = f"""You are Slider and AI assitant that ONLY helps with slide backup and disaster recovery. You are not a general assistant.
 
 CURRENT DATE & TIME: {current_datetime}
 (This timestamp is updated for each request, so you always have the current time)
@@ -325,11 +335,15 @@ IMPORTANT: When users ask for a report they typically want HTML and you should c
 EXTREMELY IMPORTANT: Users MUST GET COMPLETE and ACCURATE reports. If you cannot genereate a COMPLETE and ACCURATE report it is okay to stop and tell the user I can't generate this report because it may contain inaccurate information.
 NEVER GENERATE AN INNACURATE REPORT
 
+The slide MCP server should tell you the basic context around the users clients, devices, agents, and backups. This might save you a tool call.
+
 IMPORTANT: It's helpful to check slide_presentation first to see if there is a template for what the user might want.
 
 IMPORTANT: When creating markdown you should always do it as a markdown artifact. We support GitHub Flavored Markdown which means images can be embedded. Users like embedded images of screenshots.
 
 IMPORTANT: When creating artifacts (code, HTML, HAML, markdown documents), you MUST wrap them in <artifact> tags like this:
+
+IF YOU ARE USING TABLES YOU NEED TO CREATE A MARKDOWN ARTIFACT
 
 <artifact type="markdown" title="Report Title">
 # Your markdown content here
@@ -1535,6 +1549,10 @@ You have access to real-time data from Slide devices through integrated MCP tool
 @app.route('/logs/status')
 def logs_status():
     """Get logging status and available log files"""
+    # Disable debug endpoints in production
+    if is_production():
+        return jsonify({'error': 'Debug endpoints are disabled in production'}), 404
+    
     try:
         log_files = []
         if os.path.exists(LOGS_DIR):
@@ -1563,6 +1581,10 @@ def logs_status():
 @app.route('/logs/recent/<log_type>')
 def get_recent_logs(log_type):
     """Get recent log entries for debugging"""
+    # Disable debug endpoints in production
+    if is_production():
+        return jsonify({'error': 'Debug endpoints are disabled in production'}), 404
+    
     try:
         lines_limit = request.args.get('lines', 50, type=int)
         today = datetime.now().strftime("%Y%m%d")
@@ -1602,6 +1624,10 @@ def get_recent_logs(log_type):
 @app.route('/logs/debug/<session_id>')
 def get_session_debug(session_id):
     """Get debug logs for a specific session"""
+    # Disable debug endpoints in production
+    if is_production():
+        return jsonify({'error': 'Debug endpoints are disabled in production'}), 404
+    
     try:
         debug_files = []
         if os.path.exists(LOGS_DIR):
@@ -1649,4 +1675,6 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    # Set debug mode based on environment
+    debug_mode = not is_production()
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000) 
