@@ -286,6 +286,7 @@ claude_client = None  # Initialize lazily to avoid startup issues
 # Global variables for session management
 chat_sessions = {}
 context_managers = {}  # Store context manager per session
+validated_api_keys = {}  # Store API key validation status per session
 
 def get_session_context_manager(session_id: str) -> ContextManager:
     """Get or create a context manager for a specific session"""
@@ -297,6 +298,66 @@ def get_session_context_manager(session_id: str) -> ContextManager:
             hard_limit_threshold=0.9
         )
     return context_managers[session_id]
+
+def validate_api_key_for_session(session_id: str, api_key: str) -> tuple[bool, str]:
+    """
+    Validate an API key for a session by making a test MCP call.
+    Returns (is_valid, error_message)
+    """
+    # Check if we've already validated this API key for this session
+    if session_id in validated_api_keys:
+        cached_result = validated_api_keys[session_id]
+        if cached_result.get('api_key') == api_key:
+            # Return cached validation result
+            return cached_result['is_valid'], cached_result.get('error', '')
+    
+    # Validate the API key by making a simple MCP call
+    if not api_key:
+        return False, "API key is required to use Slide tools"
+    
+    if not api_key.startswith('tk_'):
+        return False, "Invalid API key format (must start with 'tk_')"
+    
+    # Check if MCP server is available
+    if not mcp_manager.is_server_available():
+        logger.warning("MCP server is not available for API key validation")
+        # Allow session to proceed but warn that tools won't work
+        return True, "Warning: MCP server is not available. Slide tools will not be accessible."
+    
+    try:
+        # Use slide_devices list operation as a simple validation test
+        # This is a lightweight read-only operation perfect for validation
+        result = mcp_manager.call_tool(
+            'slide_devices',
+            {'operation': 'list'},  # List devices operation
+            api_key
+        )
+        
+        # Check if the call was successful
+        if isinstance(result, dict) and 'error' not in result:
+            # API key is valid - cache the result
+            validated_api_keys[session_id] = {
+                'api_key': api_key,
+                'is_valid': True,
+                'validated_at': datetime.now().isoformat()
+            }
+            logger.info(f"API key validated successfully for session {session_id}")
+            return True, ""
+        else:
+            # API key is invalid or there was an error
+            error_msg = result.get('error', 'Unknown error') if isinstance(result, dict) else str(result)
+            
+            # Check for specific error types
+            if 'unauthorized' in error_msg.lower() or 'invalid' in error_msg.lower():
+                return False, "Invalid API key. Please check your Slide API key and try again."
+            elif 'timeout' in error_msg.lower():
+                return False, "API validation timed out. Please try again."
+            else:
+                return False, f"API validation failed: {error_msg}"
+                
+    except Exception as e:
+        logger.error(f"Error validating API key for session {session_id}: {e}")
+        return False, f"Failed to validate API key: {str(e)}"
 
 def stream_claude_response(messages, session_id=None, slide_api_key=None):
     """Direct HTTP streaming to Claude API with proper MCP tool integration"""
@@ -673,8 +734,47 @@ def chat():
         
         # Initialize or get existing session
         if session_id not in chat_sessions:
+            # New session - validate API key if provided
+            if slide_api_key:
+                is_valid, error_message = validate_api_key_for_session(session_id, slide_api_key)
+                if not is_valid:
+                    # API key validation failed - return error
+                    log_session_interaction(session_id, 'api_validation_failed', {
+                        'error': error_message,
+                        'session_id': session_id
+                    })
+                    return jsonify({
+                        'error': error_message,
+                        'error_type': 'api_validation_error'
+                    }), 401
+                elif error_message:
+                    # Validation passed but with a warning (e.g., MCP server unavailable)
+                    log_session_interaction(session_id, 'api_validation_warning', {
+                        'warning': error_message,
+                        'session_id': session_id
+                    })
+            
             chat_sessions[session_id] = []
-            log_session_interaction(session_id, 'session_created', {'session_id': session_id})
+            log_session_interaction(session_id, 'session_created', {
+                'session_id': session_id,
+                'api_key_validated': bool(slide_api_key)
+            })
+        else:
+            # Existing session - check if API key has changed
+            if slide_api_key and session_id in validated_api_keys:
+                cached_key = validated_api_keys[session_id].get('api_key')
+                if cached_key != slide_api_key:
+                    # API key has changed - revalidate
+                    is_valid, error_message = validate_api_key_for_session(session_id, slide_api_key)
+                    if not is_valid:
+                        log_session_interaction(session_id, 'api_revalidation_failed', {
+                            'error': error_message,
+                            'session_id': session_id
+                        })
+                        return jsonify({
+                            'error': error_message,
+                            'error_type': 'api_validation_error'
+                        }), 401
         
         # Add user message to session
         chat_sessions[session_id].append({
@@ -982,7 +1082,7 @@ def filter_chat_content(text_chunk, inside_artifact):
     
     return filtered_text, current_inside
 
-def generate_artifact_filename(artifact_type, title, artifact_id=None):
+def generate_artifact_filename(artifact_type, title, language=None, artifact_id=None):
     """Generate a safe filename for an artifact"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = artifact_id or str(uuid.uuid4())[:8]
@@ -1037,7 +1137,7 @@ def create_streaming_artifact_file(artifact_type, title, language=None, artifact
         os.makedirs(ARTIFACTS_DIR, exist_ok=True)
         
         # Generate filename and path
-        filename = generate_artifact_filename(artifact_type, title, artifact_id)
+        filename = generate_artifact_filename(artifact_type, title, language, artifact_id)
         filepath = os.path.join(ARTIFACTS_DIR, filename)
         
         # Create the file
@@ -1377,32 +1477,48 @@ def serve_artifact(filename):
 
 @app.route('/mcp/validate', methods=['POST'])
 def validate_slide_api_key():
-    """Validate a Slide API key by attempting to get tools"""
+    """Validate a Slide API key by attempting to make a test MCP call"""
     try:
         data = request.get_json()
         api_key = data.get('api_key', '').strip()
         
         if not api_key:
             return jsonify({'error': 'API key is required'}), 400
+        
+        # Use our validation function with a temporary session ID
+        temp_session_id = f"validation_{datetime.now().timestamp()}"
+        is_valid, error_message = validate_api_key_for_session(temp_session_id, api_key)
+        
+        # Clean up the temporary validation cache entry
+        if temp_session_id in validated_api_keys:
+            del validated_api_keys[temp_session_id]
+        
+        if is_valid:
+            # Also try to get tools for additional info
+            tools = []
+            try:
+                tools = mcp_manager.get_tools_for_claude(api_key)
+            except:
+                pass  # Tools retrieval is optional for validation response
             
-        if not api_key.startswith('tk_'):
-            return jsonify({'error': 'Invalid API key format'}), 400
-        
-        # Try to get tools to validate the key
-        tools = mcp_manager.get_tools_for_claude(api_key)
-        
-        if tools:
-            return jsonify({
+            response = {
                 'valid': True,
-                'message': 'API key is valid',
-                'tools_count': len(tools),
-                'tools': [tool.get('name') for tool in tools]
-            })
+                'message': 'API key is valid and can access Slide services'
+            }
+            
+            if tools:
+                response['tools_count'] = len(tools)
+                response['tools'] = [tool.get('name') for tool in tools]
+            
+            if error_message:  # Warning message (e.g., MCP server unavailable)
+                response['warning'] = error_message
+            
+            return jsonify(response)
         else:
             return jsonify({
                 'valid': False,
-                'error': 'Failed to retrieve tools with this API key'
-            }), 400
+                'error': error_message
+            }), 401
             
     except Exception as e:
         logger.error(f"Error validating API key: {str(e)}")
@@ -1494,6 +1610,37 @@ You have access to real-time data from Slide devices through integrated MCP tool
         
     except Exception as e:
         logger.error(f"Error getting context status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/chat/clear_session', methods=['POST'])
+def clear_session():
+    """Clear a chat session and its associated data"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id', 'default')
+        
+        # Clear session data
+        if session_id in chat_sessions:
+            del chat_sessions[session_id]
+        
+        if session_id in context_managers:
+            del context_managers[session_id]
+        
+        if session_id in validated_api_keys:
+            del validated_api_keys[session_id]
+        
+        log_session_interaction(session_id, 'session_cleared', {
+            'session_id': session_id,
+            'cleared_at': datetime.now().isoformat()
+        })
+        
+        return jsonify({
+            'message': f'Session {session_id} has been cleared',
+            'success': True
+        })
+        
+    except Exception as e:
+        logger.error(f"Error clearing session: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/chat/optimize', methods=['POST'])

@@ -257,7 +257,7 @@ class ClaudeChatClient {
         
         // Disable input during processing
         this.setInputEnabled(false);
-        this.setStatus('thinking', 'Claude is thinking...');
+        this.setStatus('thinking', 'Slider is thinking...');
         
         // Add typing indicator
         const typingIndicator = this.addTypingIndicator();
@@ -292,7 +292,7 @@ class ClaudeChatClient {
         messageDiv.className = `message ${role}-message`;
         
         const time = timestamp || new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        const senderName = role === 'user' ? 'You' : 'Claude';
+        const senderName = role === 'user' ? 'You' : 'Slider';
         
         messageDiv.innerHTML = `
             <div class="message-header">
@@ -422,7 +422,7 @@ class ClaudeChatClient {
         typingDiv.className = 'typing-indicator';
         typingDiv.innerHTML = `
             <div class="message-header">
-                <span class="message-sender">Claude</span>
+                <span class="message-sender">Slider</span>
                 <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
             </div>
             <div class="typing-dots">
@@ -771,7 +771,7 @@ class ClaudeChatClient {
                         </svg>
                     </div>
                     <h3>No artifacts yet</h3>
-                    <p>When Claude creates HTML pages, code, or other artifacts, they'll appear here for you to view and interact with.</p>
+                    <p>When Slider creates HTML pages, code, or other artifacts, they'll appear here for you to view and interact with.</p>
                 </div>
             `;
             return;
