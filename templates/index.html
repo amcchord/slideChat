@@ -226,6 +226,7 @@
     </div>
     <dialog id="login-dialog">
       <form id="login-form">
+        {% if config.RECIPES_HANDOFF_KEY %}<a class="button" href="/connect/recipes">Continue with Recipes →</a>{% endif %}
         <div class="dialog-icon">
           <img src="/static/slide-mark.svg" alt="" />
         </div>

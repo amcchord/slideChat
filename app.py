@@ -16,6 +16,7 @@ from flask import (
     abort,
     jsonify,
     render_template,
+    redirect,
     request,
     send_file,
     session,
@@ -32,6 +33,7 @@ from chat_core.sources import (
     redact,
 )
 from chat_core.store import Store
+from chat_core.recipes_handoff import install_handoff
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parent
@@ -47,6 +49,7 @@ def create_app(test_config=None):
         SESSION_COOKIE_SECURE=os.getenv("FLASK_ENV") == "production",
         PERMANENT_SESSION_LIFETIME=timedelta(days=30),
         JSON_SORT_KEYS=False,
+        RECIPES_HANDOFF_KEY=os.getenv("RECIPES_HANDOFF_KEY", ""),
     )
     if test_config:
         app.config.update(test_config)
@@ -55,6 +58,33 @@ def create_app(test_config=None):
     )
     app.secret_key = os.getenv("SECRET_KEY") or store.cookie_secret
     app.extensions["chat_store"] = store
+
+    def connect_from_recipes(key):
+        Slide(key).get("device", {"limit": 1})
+        # Preserve existing conversations, connectors and BYO model keys. A map
+        # lives in this browser's signed cookie, never a global key-to-workspace lookup.
+        accounts = session.get("recipes_workspaces", {})
+        current_id = session.get("workspace")
+        current = store.get(current_id) if current_id else None
+        if current:
+            accounts[hashlib.sha256(current["slide_key"].encode()).hexdigest()] = current_id
+        fingerprint = hashlib.sha256(key.encode()).hexdigest()
+        wid = accounts.get(fingerprint)
+        existing = store.get(wid) if wid else None
+        if not existing or not secrets.compare_digest(existing["slide_key"], key):
+            wid = store.create(key)
+        accounts.pop(fingerprint, None)
+        accounts[fingerprint] = wid
+        session["recipes_workspaces"] = dict(list(accounts.items())[-8:])
+        session["workspace"] = wid
+        session["csrf"] = secrets.token_urlsafe(32)
+        session.permanent = True
+        return redirect("/")
+
+    should_connect_recipes = install_handoff(
+        app, "chat", connect_from_recipes, "/",
+        store.path.parent / "recipes-handoffs.sqlite3",
+    )
 
     def auth():
         bearer = request.headers.get("Authorization", "")
@@ -75,7 +105,7 @@ def create_app(test_config=None):
             "DELETE",
             "PUT",
             "PATCH",
-        ) and not request.path.startswith("/api/tools"):
+        ) and not request.path.startswith("/api/tools") and request.endpoint != "recipes_handoff.callback":
             if not secrets.compare_digest(
                 request.headers.get("X-CSRF-Token", ""), session.get("csrf", "missing")
             ):
@@ -113,6 +143,9 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
+        wid = session.get("workspace")
+        if not (wid and store.get(wid)) and should_connect_recipes():
+            return redirect("/connect/recipes")
         session.setdefault("csrf", secrets.token_urlsafe(32))
         return render_template("index.html", csrf=session["csrf"], model=MODEL)
 
@@ -157,6 +190,8 @@ def create_app(test_config=None):
         wid, _ = auth()
         store.delete(wid)
         session.clear()
+        # Explicit disconnect should stay disconnected until the next Recipes visit.
+        session["recipes_attempted"] = True
         return jsonify(ok=True)
 
     @app.get("/api/context")
