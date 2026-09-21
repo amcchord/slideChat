@@ -1,187 +1,400 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slide Chat Client</title>
-        <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/charter.css') }}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css"> 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/console.css') }}">
-    <script>try{document.documentElement.dataset.theme=localStorage.getItem('recipes-theme')||'light'}catch(e){}</script>
-</head>
-<body>
-    <header class="suite-bar"><a href="https://slide.recipes" class="suite-brand"><img src="{{ url_for('static', filename='slide-mark.svg') }}" alt="Slide"> <strong>slide</strong><span>Chat</span></a><a href="https://slide.recipes">← Recipes workspace</a><button id="suite-theme" aria-label="Switch color theme">◐</button></header>
-    <div class="app-container">
-        <!-- Chat Panel (Left) -->
-        <div class="chat-panel">
-            <div class="chat-header">
-                <div class="chat-header-left">
-                    <h1>Ask Slide</h1>
-                    <button id="api-key-button" class="api-key-button" title="Configure Slide API Key">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path>
-                            <path d="m21 2-9.6 9.6"></path>
-                            <circle cx="7.5" cy="15.5" r=".5"></circle>
-                        </svg>
-                        <span class="api-key-status" id="api-key-status">No API Key</span>
-                    </button>
-                </div>
-                    <div class="status-indicator" id="status-indicator">
-                    <span class="status-dot"></span>
-                    <span class="status-text">Ready</span>
-                </div>
-            </div>
-            
-            <div class="chat-messages" id="chat-messages">
-                <div class="welcome-message">
-                    <div class="message assistant-message">
-                        <div class="message-header">
-                            <span class="message-sender">Slider</span>
-                            <span class="message-time" id="welcome-time"></span>
-                        </div>
-                        <div class="message-content">
-                            <p>Hello! I'm Slider, ready to help you with your Slide backup and disaster recovery systems.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="chat-input-container">
-                <form id="chat-form" autocomplete="off">
-                    <div class="input-wrapper">
-                        <textarea 
-                            id="message-input" aria-label="Message Slide"
-                            placeholder="Type your message to Slide..." 
-                            rows="3"
-                            maxlength="4000"
-                        ></textarea>
-                        <button type="submit" id="send-button" aria-label="Send message" class="send-button">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="22" y1="2" x2="11" y2="13"></line>
-                                <polygon points="22,2 15,22 11,13 2,9"></polygon>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="input-footer">
-                        <span class="character-count">0/4000</span>
-                    </div>
-                </form>
-            </div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf }}" />
+    <title>Slide Chat · Your operations, connected</title>
+    <link rel="icon" href="/static/slide-mark.svg" />
+    <link rel="stylesheet" href="/static/css/workspace.css" />
+    <script src="/static/js/workspace.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <button
+        id="mobile-menu"
+        class="icon-button mobile-menu"
+        aria-label="Open workspace navigation"
+        aria-expanded="false"
+      >
+        ☰</button
+      ><a class="brand" href="/" aria-label="Slide Chat home"
+        ><img src="/static/slide-mark.svg" alt="" /><span
+          >slide<span class="brand-product">chat</span></span
+        ></a
+      >
+      <div class="breadcrumb">
+        <a href="https://slide.recipes/">Recipes</a><span>/</span
+        ><strong>Chat</strong>
+      </div>
+      <div class="top-actions">
+        <span class="model-badge"><span class="spark">✧</span> GPT-6 Astra</span
+        ><button
+          class="icon-button"
+          id="theme-toggle"
+          aria-label="Toggle dark mode"
+        >
+          ◐</button
+        ><button class="button small" data-open="connections">
+          Connections <span id="connection-count">0</span>
+        </button>
+      </div>
+    </header>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <button class="button primary new-chat" id="new-chat">
+          <span>＋</span> New conversation
+        </button>
+        <div class="sidebar-label">WORKSPACE</div>
+        <button class="nav active" id="chat-nav">
+          <span data-icon="chat"></span> Chat</button
+        ><a class="nav" href="https://slide.recipes/runbooks/"
+          ><span data-icon="runbook"></span> Runbooks
+          <span class="external">↗</span></a
+        ><button class="nav" data-open="connections">
+          <span data-icon="plug"></span> Connections</button
+        ><button class="nav" data-open="companion">
+          <span data-icon="download"></span> Use in your AI
+        </button>
+        <div class="sidebar-label recent-label">RECENT CONVERSATIONS</div>
+        <div id="history" class="history">
+          <p class="muted empty-history">
+            Your work stays here.<br />Pick up where you left off.
+          </p>
         </div>
-        
-        <!-- Artifact Panel (Right) -->
-        <div class="artifact-panel">
-            <div class="artifact-header">
-                <h2>Your workspace</h2>
-                <div class="artifact-controls">
-                    <div class="context-usage-indicator" id="context-usage-indicator" title="Context window usage">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <path d="M8 12l4 4 4-4"></path>
-                        </svg>
-                        <span class="context-usage-text" id="context-usage-text">0%</span>
-                    </div>
-                    <button id="clear-artifacts" class="control-button" title="Clear all artifacts">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3,6 5,6 21,6"></polyline>
-                            <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-            
-            <div class="artifact-content" id="artifact-content">
-                <div class="artifact-placeholder">
-                    <div class="placeholder-icon">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                            <polyline points="21,15 16,10 5,21"></polyline>
-                        </svg>
-                    </div>
-                    <h3>A place for the details</h3>
-                    <p>Reports, code, and visual answers appear here as you work with Slide.</p>
-                </div>
-            </div>
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <div>
+            <strong id="account-label">Connect your workspace</strong
+            ><small id="account-detail">Your context. Your clients.</small>
+          </div>
+          <button
+            id="disconnect"
+            class="icon-button hidden"
+            aria-label="Disconnect and erase this workspace"
+          >
+            ↪
+          </button>
         </div>
-    </div>
-    
-    <!-- API Key Modal -->
-    <div class="modal-overlay" id="api-key-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Configure Slide API Key</h3>
-                <button class="modal-close" id="modal-close">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p>Enter your Slide API key to enable MCP integration with your Slide backup devices:</p>
-                <div class="input-group">
-                    <label for="api-key-input">API Key:</label>
-                    <input type="password" id="api-key-input" placeholder="tk_..." maxlength="200">
-                    <button type="button" id="toggle-visibility" class="toggle-visibility">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-info">
-                    <p><strong>Note:</strong> Your API key will be encrypted and stored securely in your browser for future sessions.</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" id="save-api-key" class="btn-primary">Save API Key</button>
-                <button type="button" id="remove-api-key" class="btn-secondary">Remove Key</button>
-                <button type="button" id="cancel-modal" class="btn-cancel">Cancel</button>
-            </div>
+      </aside>
+      <main class="main">
+        <div class="scope-bar">
+          <div>
+            <span class="eyebrow">CLIENT CONTEXT</span
+            ><select id="client-select" aria-label="Client context" disabled>
+              <option value="">All accessible clients</option>
+            </select>
+          </div>
+          <button id="refresh-context" class="text-button">
+            <span data-icon="refresh"></span> Refresh context
+          </button>
         </div>
-    </div>
-    
-    <!-- Loading overlay -->
-    <div class="loading-overlay" id="loading-overlay">
-        <div class="loading-spinner"></div>
-    </div>
-    
-    <!-- Version display -->
-    <div class="version-display">
-        v{{ version }}
-    </div>
-    
-    <!-- Context Management Modal -->
-    <div class="modal" id="context-modal" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Context Window Management</h2>
-                <button class="modal-close" onclick="window.claudeChat.closeContextModal()">×</button>
+        <div class="chat-scroll" id="chat-scroll">
+          <section class="welcome" id="welcome">
+            <div class="welcome-mark">
+              <img src="/static/slide-mark.svg" alt="" />
             </div>
-            <div class="modal-body">
-                <div class="context-stats" id="context-stats">
-                    <!-- Will be populated by JavaScript -->
-                </div>
-                <div class="context-actions">
-                    <button class="btn btn-secondary" onclick="window.claudeChat.clearOldMessages()">
-                        Clear Old Messages
-                    </button>
-                    <button class="btn btn-secondary" onclick="window.claudeChat.optimizeContext()">
-                        Optimize Context
-                    </button>
-                    <button class="btn btn-primary" onclick="window.claudeChat.closeContextModal()">
-                        Close
-                    </button>
-                </div>
+            <div class="eyebrow">YOUR OPERATIONS, CONNECTED</div>
+            <h1>Good answers start<br />with the whole picture.</h1>
+            <p>
+              Bring your clients, backups, RMM, and billing into one
+              conversation. Get to the evidence. Know what to do next.
+            </p>
+            <div class="capability-row">
+              <span><i class="status-dot"></i> Live Slide context</span
+              ><span><span data-icon="shield"></span> Read-only tools</span
+              ><span><span data-icon="link"></span> Cited evidence</span>
             </div>
+            <div class="prompt-grid">
+              <button
+                class="prompt-card"
+                data-prompt="Review this client's backup protection. Identify the three most urgent risks, cite the evidence, and tell me exactly what to check first."
+              >
+                <span class="prompt-icon blue" data-icon="shield"></span
+                ><strong>What needs attention?</strong
+                ><small>Find backup risks and prioritize the next step.</small
+                ><span class="prompt-arrow">↗</span></button
+              ><button
+                class="prompt-card"
+                data-prompt="Assess recovery readiness for this client. Inspect server details and recent recovery points. Separate confirmed facts from missing information."
+              >
+                <span class="prompt-icon purple" data-icon="runbook"></span
+                ><strong>Can we recover this client?</strong
+                ><small>Understand the servers, dependencies, and gaps.</small
+                ><span class="prompt-arrow">↗</span></button
+              ><button
+                class="prompt-card"
+                data-prompt="Reconcile the connected RMM inventory with this client's Slide agents. Identify unprotected systems and uncertain matches; cite the source records."
+              >
+                <span class="prompt-icon teal" data-icon="layers"></span
+                ><strong>Connect the dots</strong
+                ><small>Compare RMM inventory with protected systems.</small
+                ><span class="prompt-arrow">↗</span></button
+              ><button
+                class="prompt-card"
+                data-prompt="Review this client's connected billing records. Explain outstanding invoices, currencies, billing periods, and any changes you can substantiate."
+              >
+                <span class="prompt-icon orange" data-icon="receipt"></span
+                ><strong>Make sense of billing</strong
+                ><small>Explain invoices using your connected records.</small
+                ><span class="prompt-arrow">↗</span>
+              </button>
+            </div>
+          </section>
+          <div id="messages" class="messages" aria-live="polite"></div>
         </div>
+        <div class="composer-wrap">
+          <div
+            id="stream-status"
+            class="stream-status hidden"
+            role="status"
+          ></div>
+          <form id="chat-form" class="composer">
+            <textarea
+              id="message"
+              rows="2"
+              maxlength="16000"
+              placeholder="Ask about your clients, protection, recovery, or billing…"
+              aria-label="Message Slide Chat"
+            ></textarea>
+            <div class="composer-bottom">
+              <button type="button" class="text-button" data-open="connections">
+                <span data-icon="plus"></span> Add context</button
+              ><span class="composer-scope" id="composer-scope"
+                >Your workspace is ready to connect</span
+              ><button
+                class="send-button"
+                id="send"
+                type="submit"
+                aria-label="Send message"
+              >
+                ↑</button
+              ><button class="button hidden" id="stop" type="button">
+                Stop
+              </button>
+            </div>
+          </form>
+          <div class="composer-note">
+            Grounded in your sources. Verify critical decisions.
+            <button class="text-button" data-open="companion">
+              Bring Slide Chat to your favorite AI ↗
+            </button>
+          </div>
+        </div>
+      </main>
+      <aside class="context-panel">
+        <div class="panel-heading">
+          <h2>Working context</h2>
+          <span class="pill">LIVE</span>
+        </div>
+        <p class="muted context-intro">The evidence behind the answer.</p>
+        <div class="context-source">
+          <div class="source-logo">
+            <img src="/static/slide-mark.svg" alt="" />
+          </div>
+          <div>
+            <strong>Slide</strong><small id="slide-status">Not connected</small>
+          </div>
+          <span id="slide-dot" class="status-dot inactive"></span>
+        </div>
+        <div class="fleet-stats">
+          <div><strong id="stat-clients">—</strong><span>Clients</span></div>
+          <div><strong id="stat-devices">—</strong><span>Devices</span></div>
+          <div><strong id="stat-agents">—</strong><span>Agents</span></div>
+        </div>
+        <div id="context-sources" class="context-sources"></div>
+        <button class="add-source" data-open="connections">
+          <span data-icon="plus"></span> Connect another source
+        </button>
+        <div class="context-divider"></div>
+        <h3>Evidence collected <span id="evidence-count">0</span></h3>
+        <div id="evidence-list">
+          <div class="evidence-empty">
+            <span data-icon="search"></span>
+            <p>
+              Source reads will appear here as Chat investigates your question.
+            </p>
+          </div>
+        </div>
+        <div class="context-footer">
+          <span data-icon="lock"></span>
+          <p>
+            Credentials stay encrypted on the server. Chat tools only read data.
+          </p>
+        </div>
+      </aside>
     </div>
-    
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-<script>document.getElementById('suite-theme').addEventListener('click',function(){const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;try{localStorage.setItem('recipes-theme',theme)}catch(e){}});</script>
-</body>
+    <dialog id="login-dialog">
+      <form id="login-form">
+        <div class="dialog-icon">
+          <img src="/static/slide-mark.svg" alt="" />
+        </div>
+        <span class="eyebrow">WELCOME TO SLIDE CHAT</span>
+        <h2>Connect your workspace.</h2>
+        <p class="muted">
+          Start with your Slide API key. Add RMM and billing sources whenever
+          you’re ready.
+        </p>
+        <label
+          >Slide API key<input
+            name="slide_key"
+            type="password"
+            required
+            placeholder="tk_…"
+            autocomplete="off"
+        /></label>
+        <p class="field-hint">
+          Use a key with access to clients, devices, and agents. Your key is
+          encrypted and never sent to the model.
+        </p>
+        <p class="form-error" role="alert"></p>
+        <button class="button primary full" type="submit">
+          Connect Slide <span>→</span>
+        </button>
+      </form>
+    </dialog>
+    <dialog id="connections-dialog" class="wide-dialog">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">WORKSPACE SETTINGS</span>
+          <h2>Connections</h2>
+        </div>
+        <button class="icon-button close-dialog" aria-label="Close connections">
+          ×
+        </button>
+      </div>
+      <p class="muted">
+        Give Chat the context your team works with. Each source is bound to a
+        client.
+      </p>
+      <section class="openai-setting">
+        <div class="setting-heading">
+          <span class="source-letter">✧</span>
+          <div>
+            <strong>GPT-6 Astra</strong
+            ><small id="openai-status">OpenAI API key needed</small>
+          </div>
+        </div>
+        <form id="openai-form" class="inline-form">
+          <input
+            name="key"
+            type="password"
+            placeholder="OpenAI API key (sk-…)"
+            aria-label="OpenAI API key"
+            autocomplete="off"
+            required
+          /><button class="button" type="submit">Save key</button>
+        </form>
+        <p class="field-hint">
+          Your source data is sent to OpenAI to answer questions. Requests use
+          the Responses API with storage disabled.
+        </p>
+      </section>
+      <div id="connection-list"></div>
+      <h3>Add a source</h3>
+      <form id="connector-form">
+        <div class="form-grid">
+          <label
+            >Source type<select name="kind">
+              <option value="ninjaone">NinjaOne RMM</option>
+              <option value="stripe">Stripe billing</option>
+              <option value="import">JSON / CSV import</option>
+            </select></label
+          ><label
+            >Slide client<select name="client_id" required></select
+          ></label>
+        </div>
+        <label
+          >Connection name<input
+            name="name"
+            required
+            maxlength="80"
+            placeholder="e.g. Acme · NinjaOne"
+        /></label>
+        <div id="connector-fields"></div>
+        <p class="form-error" role="alert"></p>
+        <button class="button primary" type="submit">
+          Test & connect source
+        </button>
+      </form>
+    </dialog>
+    <dialog id="companion-dialog" class="wide-dialog">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">YOUR TOOLS, ANYWHERE</span>
+          <h2>Bring Slide to your AI.</h2>
+        </div>
+        <button class="icon-button close-dialog" aria-label="Close companion">
+          ×
+        </button>
+      </div>
+      <p class="muted">
+        Download the skill and lightweight MCP companion for Claude Desktop,
+        Claude Code, Codex, or another MCP client. It uses this workspace’s
+        scoped, read-only tools.
+      </p>
+      <a class="button primary" href="/downloads/slide-chat-companion.zip"
+        ><span data-icon="download"></span> Download companion</a
+      >
+      <div class="setup-step">
+        <span>1</span>
+        <div>
+          <strong>Unzip the companion</strong>
+          <p>
+            Python 3.10 or newer is all you need. Copy the
+            <code>slide-chat</code> folder into your agent’s skills directory,
+            or configure the included MCP server.
+          </p>
+        </div>
+      </div>
+      <div class="setup-step">
+        <span>2</span>
+        <div>
+          <strong>Create a private access token</strong>
+          <p>
+            Valid for 30 days. Creating a new token revokes the previous one.
+            Disconnecting the workspace revokes access.
+          </p>
+          <button class="button" id="create-token">
+            Create companion token
+          </button>
+          <div id="token-output" class="hidden">
+            <input
+              id="companion-token"
+              type="password"
+              readonly
+              aria-label="Companion token"
+            /><button class="button" id="copy-token">Copy token</button>
+          </div>
+        </div>
+      </div>
+      <div class="setup-step">
+        <span>3</span>
+        <div>
+          <strong>Set your environment</strong>
+          <pre>
+SLIDE_CHAT_URL=https://chat.slide.recipes
+SLIDE_CHAT_TOKEN=&lt;your private token&gt;
+SLIDE_CLIENT_ID=&lt;optional client ID&gt;
+
+python3 slide-chat/scripts/slide_chat.py --mcp</pre>
+          <p>
+            Keep credentials in your environment or secret manager. The download
+            contains no account data or credentials.
+          </p>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="evidence-dialog" class="wide-dialog">
+      <div class="dialog-head">
+        <h2 id="evidence-title">Evidence</h2>
+        <button class="icon-button close-dialog" aria-label="Close evidence">
+          ×
+        </button>
+      </div>
+      <p id="evidence-time" class="muted"></p>
+      <pre id="evidence-data"></pre>
+    </dialog>
+    <div id="toast" class="toast hidden" role="status"></div>
+  </body>
 </html>

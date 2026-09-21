@@ -1,4 +1,7 @@
-# Recipes modernization
+# First modernization pass (superseded)
+
+This document records the earlier transport/theme pass. The current GPT-6 Astra rebuild is documented in [README](../README.md) and [rebuild validation](rebuild-validation.md). It replaces the UI/provider pipeline described below.
+
 
 Chat now uses the Recipes visual language: Archivo typography, light/dark themes, a shared suite bar and back link, calmer chat/artifact panes, and responsive stacking. Message input and send controls have explicit accessible labels.
 
