@@ -60,6 +60,27 @@ class SourceTests(unittest.TestCase):
         data = box.call("slide_activity", {"agent_id": "a1", "kind": "alert"})
         self.assertEqual(data["data"]["recent_page"]["data"], [{"agent_id": "a1"}])
 
+    @patch("chat_core.sources.time.sleep")
+    @patch("chat_core.sources.requests.request")
+    def test_long_retry_after_is_not_retried_early(self, request, sleep):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        for header in (
+            "60",
+            format_datetime(
+                datetime.now(timezone.utc) + timedelta(seconds=120), usegmt=True
+            ),
+        ):
+            request.reset_mock()
+            request.return_value = Mock(
+                status_code=429, headers={"Retry-After": header}
+            )
+            with self.assertRaisesRegex(SourceError, "longer retry delay"):
+                Slide("key").get("agent")
+            self.assertEqual(request.call_count, 1)
+            sleep.assert_not_called()
+
     def test_secret_fields_removed_recursively(self):
         result = redact(
             {
@@ -216,6 +237,8 @@ class AgentTests(unittest.TestCase):
         )
         for payload in requests:
             self.assertEqual(payload["model"], "gpt-6-astra")
+            self.assertNotIn("Acme", payload["instructions"])
+            self.assertIn("Acme", payload["input"][0]["content"])
             self.assertFalse(payload["store"])
             self.assertNotIn("temperature", payload)
             self.assertNotIn("top_p", payload)

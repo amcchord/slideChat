@@ -4,7 +4,8 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import requests
 
 
@@ -38,12 +39,22 @@ def request_json(url, *, headers=None, params=None, data=None, auth=None):
             and attempt < 2
             and data is None
         ):
+            retry_after = response.headers.get("Retry-After", "0.5")
             try:
-                delay = min(
-                    5, max(0.25, float(response.headers.get("Retry-After", 0.5)))
-                )
+                delay = float(retry_after)
             except ValueError:
-                delay = 0.5
+                try:
+                    retry_at = parsedate_to_datetime(retry_after)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=timezone.utc)
+                    delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+                except (ValueError, TypeError, OverflowError):
+                    delay = 0.5
+            if delay > 5:
+                raise SourceError(
+                    "The source requested a longer retry delay. Try again later; this request was not retried early."
+                )
+            delay = max(0.25, delay)
             time.sleep(delay)
             continue
         if not 200 <= response.status_code < 300:
