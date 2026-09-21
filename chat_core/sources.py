@@ -89,6 +89,22 @@ def redact(value):
     return value
 
 
+def compact_service_page(page):
+    """Keep every returned service and operational field without verbose OS help text."""
+    if not isinstance(page, dict) or not isinstance(page.get("data"), list):
+        raise SourceError("Unexpected service collection shape.")
+    fields = ("name", "display_name", "state", "startup", "verify_on_boot")
+    return {
+        **{key: value for key, value in page.items() if key != "data"},
+        "data": [
+            {key: row[key] for key in fields if key in row}
+            for row in page["data"]
+            if isinstance(row, dict)
+        ],
+        "note": "Descriptions and service IDs omitted. All returned service names, states, startup settings and verification flags retained. This is the returned page, not proof of application recovery or a dependency map.",
+    }
+
+
 def compact_alert_page(page):
     """Keep operational evidence structured; embedded inventory is historical, not live."""
     for row in page.get("data", []):

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ csrf }}" />
-    <title>Slide Chat · Your operations, connected</title>
+    <title>Slide Chat</title>
     <link rel="icon" href="/static/slide-mark.svg" />
     <link rel="stylesheet" href="/static/css/workspace.css" />
     <script type="module" src="/static/js/workspace.js"></script>
@@ -28,8 +28,7 @@
         ><strong>Chat</strong>
       </div>
       <div class="top-actions">
-        <span class="model-badge"><span class="spark">✧</span> GPT-6 Astra</span
-        ><button
+        <button
           class="icon-button"
           id="theme-toggle"
           aria-label="Toggle dark mode"
@@ -58,15 +57,13 @@
         </button>
         <div class="sidebar-label recent-label">RECENT CONVERSATIONS</div>
         <div id="history" class="history">
-          <p class="muted empty-history">
-            Your work stays here.<br />Pick up where you left off.
-          </p>
+          <p class="muted empty-history">No conversations yet.</p>
         </div>
         <div class="sidebar-footer">
           <span class="status-dot"></span>
           <div>
             <strong id="account-label">Connect your workspace</strong
-            ><small id="account-detail">Your context. Your clients.</small>
+            ><small id="account-detail">Slide API key required</small>
           </div>
           <button
             id="disconnect"
@@ -90,103 +87,119 @@
           </button>
         </div>
         <div class="chat-scroll" id="chat-scroll">
-          <section class="welcome" id="welcome">
-            <div class="welcome-mark">
-              <img src="/static/slide-mark.svg" alt="" />
-            </div>
-            <div class="eyebrow">YOUR OPERATIONS, CONNECTED</div>
-            <h1>Good answers start<br />with the whole picture.</h1>
-            <p>
-              Bring your clients, backups, RMM, and billing into one
-              conversation. Get to the evidence. Know what to do next.
-            </p>
-            <div class="capability-row">
-              <span><i class="status-dot"></i> Live Slide context</span
-              ><span><span data-icon="shield"></span> Explicit approvals</span
-              ><span><span data-icon="link"></span> Cited evidence</span>
-            </div>
+          <section
+            class="welcome compact-home"
+            id="welcome"
+            aria-labelledby="workflow-title"
+          >
+            <h1 id="workflow-title">Client workflows</h1>
             <div class="prompt-grid">
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Prepare a concise operations brief for this client using current inventory, protection status, alerts, and connected records. Lead with the most urgent substantiated risks, then a short prioritized action list with exact systems and verification steps. Cite every finding, state observation times and coverage limits, and separate unknowns from confirmed facts. Do not invent fleet totals or history."
+                data-client-required="true"
+                data-prompt="Give me a client operations brief with urgent risks and the next steps."
               >
-                <span class="prompt-icon blue" data-icon="layers"></span
-                ><strong>Build my client brief</strong
-                ><small
-                  >Prioritize today’s risks and the next useful step.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon blue"
+                  data-icon="layers"
+                  aria-hidden="true"
+                ></span
+                ><strong>Client brief</strong><small>Today’s priorities</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Investigate backup failures for this client. Group findings by server, inspect the available backup history and alerts, identify retries and the latest known outcome, and rank unresolved issues. Provide evidence-backed likely causes and the exact next diagnostic step. State the period and limits actually checked; do not treat a recovered failure as an ongoing outage."
+                data-client-required="true"
+                data-prompt="Investigate failed backups for this client, check retries and latest outcomes, and prioritize unresolved issues."
               >
-                <span class="prompt-icon orange" data-icon="refresh"></span
-                ><strong>Investigate failed backups</strong
-                ><small>Trace failures, retries, and the latest outcome.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon orange"
+                  data-icon="refresh"
+                  aria-hidden="true"
+                ></span
+                ><strong>Failed backups</strong
+                ><small>Failures and retries</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Assess recovery readiness for this client. Inspect server details, operating systems, installed services, recovery points, and available verification results. Build a concise table of confirmed server roles, recovery options, dependencies, and blocking unknowns, followed by prioritized tests. Do not infer a server role from its hostname or claim readiness without supporting evidence."
+                data-client-required="true"
+                data-prompt="Assess this client’s recovery readiness: server roles, dependencies, recovery options, and blocking gaps."
               >
-                <span class="prompt-icon purple" data-icon="runbook"></span
-                ><strong>Check recovery readiness</strong
-                ><small>Understand the systems, dependencies, and gaps.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon purple"
+                  data-icon="runbook"
+                  aria-hidden="true"
+                ></span
+                ><strong>Recovery readiness</strong
+                ><small>Can we restore?</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Find usable recovery points for this client&#x27;s protected servers. Compare the newest observed local and cloud recovery points, timestamps and age, available verification evidence, and any gaps. Recommend which point to investigate for each server and why. Cite the exact records and explain history or location coverage limits; do not imply a restore has been tested unless the evidence says so."
+                data-client-required="true"
+                data-prompt="Compare this client’s latest local and cloud recovery points, their ages and verification results."
               >
-                <span class="prompt-icon blue" data-icon="shield"></span
-                ><strong>Find the right recovery point</strong
-                ><small>Compare age, location, and verification evidence.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon blue"
+                  data-icon="shield"
+                  aria-hidden="true"
+                ></span
+                ><strong>Recovery points</strong
+                ><small>Latest usable copies</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Reconcile the connected RMM inventory with this client&#x27;s Slide agents. Show confirmed matches, RMM systems with no evidenced Slide protection, and ambiguous matches separately, using stable identifiers where possible. Identify stale source data and the exact follow-up needed for each gap. If no RMM source is connected, say what is missing rather than claiming complete coverage."
+                data-client-required="true"
+                data-prompt="Reconcile this client’s RMM inventory with Slide protection. Identify unprotected systems and uncertain matches."
               >
-                <span class="prompt-icon teal" data-icon="link"></span
-                ><strong>Reconcile RMM coverage</strong
-                ><small>Find unprotected systems and uncertain matches.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon teal"
+                  data-icon="link"
+                  aria-hidden="true"
+                ></span
+                ><strong>RMM coverage</strong><small>Protection gaps</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Triage this client&#x27;s alerts using current alert status and related server and backup evidence. Prioritize active problems, identify duplicates or resolved history where supported, and give a concrete next step for each issue. Cite exact alerts and observation times. If a system change would help, explain it and prepare it for review only when Write mode is enabled; never imply it already ran."
+                data-client-required="true"
+                data-prompt="Triage this client’s active alerts and give the next diagnostic step for each unresolved issue."
               >
-                <span class="prompt-icon orange" data-icon="search"></span
-                ><strong>Triage client alerts</strong
-                ><small>Separate active issues from resolved history.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon orange"
+                  data-icon="search"
+                  aria-hidden="true"
+                ></span
+                ><strong>Alert triage</strong><small>Issues to act on</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Review capacity for this client&#x27;s devices and protected servers using available disk, storage, and retention evidence. Show observed used and free capacity with units, highlight substantiated constraints, and recommend specific checks. Estimate growth or time-to-full only when actual dated history supports the calculation. State missing measurements and avoid invented thresholds or totals."
+                data-client-required="true"
+                data-prompt="Check this client’s device and server capacity. Identify storage pressure and recommend specific checks."
               >
-                <span class="prompt-icon teal" data-icon="layers"></span
-                ><strong>Review capacity pressure</strong
-                ><small>Spot constrained devices without guessing runway.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon teal"
+                  data-icon="layers"
+                  aria-hidden="true"
+                ></span
+                ><strong>Capacity</strong><small>Storage pressure</small>
               </button>
               <button
                 type="button"
                 class="prompt-card"
-                data-prompt="Review this client&#x27;s connected billing records. Separate paid, open, overdue, and void invoices; show billing periods, due dates, currencies, and supported line-item explanations. Explain changes only when comparable records substantiate them, and never combine currencies. Cite source records and flag mapping or coverage gaps. If billing is not connected, say so; do not infer invoices from Slide inventory."
+                data-client-required="true"
+                data-prompt="Summarize this client’s connected billing records: invoice status, balances, billing periods, and any evidenced changes in charges."
               >
-                <span class="prompt-icon purple" data-icon="receipt"></span
-                ><strong>Explain client billing</strong
-                ><small
-                  >Reconcile invoices, dates, currencies, and status.</small
-                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+                <span
+                  class="prompt-icon purple"
+                  data-icon="receipt"
+                  aria-hidden="true"
+                ></span
+                ><strong>Billing</strong><small>Invoices and balances</small>
               </button>
             </div>
           </section>
@@ -211,7 +224,7 @@
               </button>
             </div>
             <p id="mode-description">
-              Investigate freely. Tools only read your connected sources.
+              Read only.
             </p>
           </div>
           <div
@@ -224,14 +237,14 @@
               id="message"
               rows="2"
               maxlength="16000"
-              placeholder="Ask about your clients, protection, recovery, or billing…"
+              placeholder="Ask about this client…"
               aria-label="Message Slide Chat"
             ></textarea>
             <div class="composer-bottom">
               <button type="button" class="text-button" data-open="connections">
                 <span data-icon="plus"></span> Add context</button
               ><span class="composer-scope" id="composer-scope"
-                >Your workspace is ready to connect</span
+                >Connect your workspace</span
               ><button
                 class="send-button"
                 id="send"
@@ -244,20 +257,14 @@
               </button>
             </div>
           </form>
-          <div class="composer-note">
-            Grounded in your sources. Verify critical decisions.
-            <button class="text-button" data-open="companion">
-              Bring Slide Chat to your favorite AI ↗
-            </button>
-          </div>
+
         </div>
       </main>
       <aside class="context-panel">
         <div class="panel-heading">
           <h2>Working context</h2>
-          <span class="pill">LIVE</span>
         </div>
-        <p class="muted context-intro">The evidence behind the answer.</p>
+
         <div id="context-mode" class="context-mode">Read · No changes</div>
         <div class="context-source">
           <div class="source-logo">
@@ -282,9 +289,7 @@
         <div id="evidence-list">
           <div class="evidence-empty">
             <span data-icon="search"></span>
-            <p>
-              Source reads will appear here as Chat investigates your question.
-            </p>
+            <p>No sources read yet.</p>
           </div>
         </div>
         <div class="context-footer">
@@ -305,12 +310,8 @@
         <div class="dialog-icon">
           <img src="/static/slide-mark.svg" alt="" />
         </div>
-        <span class="eyebrow">WELCOME TO SLIDE CHAT</span>
-        <h2>Connect your workspace.</h2>
-        <p class="muted">
-          Start with your Slide API key. Add RMM and billing sources whenever
-          you’re ready.
-        </p>
+        <h2>Connect Slide</h2>
+        <p class="muted">Enter your Slide API key to select a client.</p>
         <label
           >Slide API key<input
             name="slide_key"
@@ -339,10 +340,7 @@
           ×
         </button>
       </div>
-      <p class="muted">
-        Give Chat the context your team works with. Each source is bound to a
-        client.
-      </p>
+      <p class="muted">Connect RMM or billing data to a Slide client.</p>
       <section class="openai-setting">
         <div class="setting-heading">
           <span class="source-letter">✧</span>

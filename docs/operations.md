@@ -35,3 +35,14 @@ OpenAI integration follows [strict function calling](https://developers.openai.c
 ## Validation
 
 Python tests cover client isolation, CSRF, mode and companion restrictions, durable single dispatch across concurrent workers, stale targets, expiry, cancellation, uncertain outcomes, all supported request bodies, and typed entities/export. Frontend tests cover partial Markdown, tables, citations, entity rendering, and action review behavior. Browser QA uses an isolated fixture server for actual Execute clicks; live Slide verification reads inventory and prepares/cancels a proposal without dispatching fleet changes.
+
+
+## Clarification replies and compact workflows
+
+Chat uses `ask_question` for bounded clarification choices. Client labels are resolved from accessible inventory, generic buttons submit exactly their visible label, and replies never execute a change. Questions and choices persist with conversation history. A client choice continues the original task in a new conversation scoped to that client; prior clarification questions and answers travel with the task, while prior client evidence does not. Saved client questions with verified entity references also receive reply buttons.
+
+All eight homepage workflows run on click. When no client is selected, a searchable client picker opens before any model request. Navigation, scope changes, manual sends, and action execution are locked while a selection resolves. The homepage omits marketing copy and uses a compact two-column layout.
+
+Server service reads preserve every returned name, state, startup setting and verification flag, while omitting verbose OS descriptions and service IDs. This prevents descriptions from exhausting the answer context and hiding application evidence. Pagination metadata remains intact.
+
+Validation: 51 Python and 21 frontend tests; actual Astra answers for all eight workflows against the authorized demo account; clarification and generic reply flows; 1280×720 desktop and 390×667 mobile screenshots, including dark mode. Evaluations and screenshots are private local artifacts, not repository fixtures.

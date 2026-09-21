@@ -48,6 +48,33 @@ export function copyMarkdown(text, entities = []) {
     .join("");
 }
 
+// Compatibility for saved questions created before structured replies existed.
+// Only verified client references in an explicit client question become choices.
+export function clientQuestionChoices(content, entities = []) {
+  if (!/^\s*(?:which|what) client\b[^?]*\?/i.test(content)) return [];
+  const verified = entityMap(entities), found = new Map();
+  for (const match of String(content).matchAll(ENTITY_PATTERN)) {
+    const entity = verified.get(`${match[1]}:${match[2]}`);
+    if (entity?.type === "client")
+      found.set(entity.id, { label: entity.label, client_id: entity.id });
+  }
+  return found.size >= 2 && found.size <= 8 ? [...found.values()] : [];
+}
+
+export function replyRequest(choice, original, client, clients = []) {
+  if (!choice || typeof choice.label !== "string" || !choice.label.trim())
+    throw Error("This answer is unavailable.");
+  if (!choice.client_id) return { message: choice.label, client, restart: false };
+  const selected = clients.find((item) => item.client_id === choice.client_id);
+  if (!selected) throw Error("This client is no longer accessible. Refresh context.");
+  if (!original) throw Error("Enter your question for this client.");
+  return {
+    message: original,
+    client: selected.client_id,
+    restart: selected.client_id !== client,
+  };
+}
+
 export function splitTableRow(line) {
   let source = String(line).trim();
   if (source.startsWith("|")) source = source.slice(1);
@@ -136,6 +163,7 @@ export function actionEligibility(
 }
 
 export const TOOL_LABELS = {
+  ask_question: "Preparing answer choices",
   slide_inventory: "Reading the client inventory",
   slide_agent: "Inspecting server details and services",
   slide_device_alerts: "Checking device alerts",

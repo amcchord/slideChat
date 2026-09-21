@@ -1920,3 +1920,135 @@ body.dark .action-status.status-unknown {
     transparent 27px
   );
 }
+
+/* Keep the complete starter set visible in a compact workspace. */
+.welcome.compact-home {
+  max-width: 880px;
+  padding: 18px 30px;
+}
+.compact-home h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  line-height: 24px;
+  letter-spacing: -0.3px;
+  font-weight: 600;
+}
+.compact-home .prompt-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.compact-home .prompt-card {
+  min-height: 64px;
+  padding: 11px 12px 10px 50px;
+  border-radius: 8px;
+}
+.compact-home .prompt-icon {
+  position: absolute;
+  left: 13px;
+  top: 18px;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+.compact-home .prompt-card strong {
+  padding: 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+}
+.compact-home .prompt-card small {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 15px;
+  max-width: none;
+}
+.context-panel .panel-heading {
+  margin-bottom: 12px;
+}
+body.dark .compact-home .blue {
+  background: #24314b;
+  color: #b5c8ff;
+}
+body.dark .compact-home .purple {
+  background: #342948;
+  color: #d2b8f3;
+}
+body.dark .compact-home .teal {
+  background: #1d3939;
+  color: #9fdacf;
+}
+body.dark .compact-home .orange {
+  background: #3e3026;
+  color: #ebc6a6;
+}
+@media (max-width: 720px) {
+  .welcome.compact-home {
+    padding: 14px;
+  }
+  .compact-home h1 {
+    margin-bottom: 10px;
+    font-size: 16px;
+    line-height: 22px;
+  }
+  .compact-home .prompt-card {
+    min-height: 56px;
+    padding: 9px 8px 9px 41px;
+  }
+  .compact-home .prompt-icon {
+    left: 10px;
+    top: 17px;
+    width: 22px;
+    height: 22px;
+  }
+  .compact-home .prompt-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+  .compact-home .prompt-card strong {
+    font-size: 11px;
+    line-height: 16px;
+  }
+  .compact-home .prompt-card small {
+    font-size: 9px;
+    line-height: 13px;
+    margin-top: 2px;
+  }
+}
+@media (max-width: 720px) and (max-height: 700px) {
+  .scope-bar {
+    height: 60px;
+    padding: 8px 16px;
+  }
+  .welcome.compact-home {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .compact-home .prompt-grid {
+    gap: 7px;
+  }
+  .composer-wrap {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .composer {
+    padding: 10px 12px 8px;
+  }
+  .composer textarea {
+    min-height: 40px;
+  }
+  .composer-note {
+    margin-top: 6px;
+  }
+}
+
+/* Clarification replies submit a message; operational changes still use review. */
+.reply-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 8px; }
+.reply-button { border-color: var(--primary); min-height: 40px; white-space: normal; text-align: left; }
+.reply-button:disabled { opacity: .5; cursor: default; }
+.client-picker { width: min(440px, calc(100vw - 28px)); }
+.client-picker h2 { margin: 0; }
+.client-filter { width: 100%; margin: 6px 0 14px; }
+.client-options { display: grid; gap: 8px; max-height: 45dvh; overflow: auto; }
+.client-options .button { min-height: 44px; justify-content: flex-start; white-space: normal; text-align: left; }
+
+.messages:empty { display: none; }

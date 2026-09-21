@@ -12,7 +12,26 @@ import {
   citationIds,
   createMarkdownRenderer,
   createEventDecoder,
+  clientQuestionChoices,
+  replyRequest,
 } from "../static/js/rendering.mjs";
+
+test("saved client clarification offers only verified choices", () => {
+  const clients = ["a", "b"].map((id) => ({ type: "client", id, ref: `client:${id}`, label: id.toUpperCase() }));
+  const question = "Which client should I investigate: [[client:a]] or [[client:b]]?";
+  assert.deepEqual(clientQuestionChoices(question, clients), [{ label: "A", client_id: "a" }, { label: "B", client_id: "b" }]);
+  assert.deepEqual(clientQuestionChoices(question, clients.slice(0, 1)), []);
+  assert.deepEqual(clientQuestionChoices("Compared [[client:a]] and [[client:b]].", clients), []);
+});
+
+test("client reply preserves the task and starts a conversation in the chosen scope", () => {
+  assert.deepEqual(replyRequest({ label: "Misleading model name", client_id: "a" }, "Check backups", "", [{ client_id: "a", name: "Acme" }]), { message: "Check backups", client: "a", restart: true });
+  assert.throws(() => replyRequest({ label: "Unknown", client_id: "b" }, "Check backups", "", [{ client_id: "a" }]), /no longer accessible/);
+});
+
+test("generic reply sends exactly the visible answer and preserves scope", () => {
+  assert.deepEqual(replyRequest({ label: "Last 24 hours", client_id: "", message: "hidden command" }, "ignored", "a"), { message: "Last 24 hours", client: "a", restart: false });
+});
 
 // Deliberately no HTML parser: an accidental HTML sink fails these renderer tests.
 class TestNode {

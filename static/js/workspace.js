@@ -6,6 +6,8 @@ import {
   actionState,
   actionEligibility,
   toolLabel,
+  clientQuestionChoices,
+  replyRequest,
 } from "./rendering.mjs";
 ("use strict");
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -21,6 +23,7 @@ const state = {
   controller: null,
   mode: "read",
   modeChanging: false,
+  choosingReply: false,
   actions: new Map(),
   executingActions: new Set(),
   reviewActionId: null,
@@ -86,17 +89,18 @@ function setBusy(busy) {
   state.busy = busy;
   $("#send").classList.toggle("hidden", busy);
   $("#stop").classList.toggle("hidden", !busy);
-  $("#client-select").disabled = busy || !state.connected;
+  $("#client-select").disabled = busy || state.choosingReply || !state.connected;
   $("#new-chat").disabled = busy;
   $("#stream-status").classList.toggle("hidden", !busy);
   renderMode();
+  syncReplyButtons();
 }
 function closeNavigation() {
   $(".sidebar").classList.remove("mobile-open");
   $("#mobile-menu").setAttribute("aria-expanded", "false");
 }
-function newConversation() {
-  if (state.busy || state.executingActions.size) return;
+function newConversation(fromChoice = false) {
+  if (state.busy || (state.choosingReply && fromChoice !== true) || state.executingActions.size) return;
   closeNavigation();
   state.conversation = null;
   state.evidence = [];
@@ -166,7 +170,7 @@ async function loadContext() {
       minute: "2-digit",
     });
   $("#slide-dot").classList.remove("inactive");
-  $("#client-select").disabled = state.busy;
+  $("#client-select").disabled = state.busy || state.choosingReply;
   const sources = $("#context-sources");
   sources.replaceChildren();
   data.sources.forEach((c) => {
@@ -235,7 +239,7 @@ function renderHistory() {
     const remove = node("button", "history-delete", "×");
     remove.setAttribute("aria-label", "Delete " + c.title);
     remove.onclick = async () => {
-      if (state.busy || state.executingActions.size) return;
+      if (state.busy || state.choosingReply || state.executingActions.size) return;
       try {
         await api("/api/conversations/" + c.id, { method: "DELETE" });
         if (state.conversation === c.id) newConversation();
@@ -252,12 +256,15 @@ function renderHistory() {
       node(
         "p",
         "muted empty-history",
-        "Your work stays here. Pick up where you left off.",
+        "No conversations yet.",
       ),
     );
 }
 async function loadConversation(id) {
-  if (state.busy || state.executingActions.size) return;
+  if (state.busy || state.choosingReply || state.executingActions.size) return;
+  state.choosingReply = true;
+  renderMode();
+  syncReplyButtons();
   hideEntity();
   try {
     const data = await api("/api/conversations/" + id);
@@ -268,7 +275,7 @@ async function loadConversation(id) {
     $("#welcome").classList.add("hidden");
     $("#messages").replaceChildren();
     state.evidence = [];
-    data.messages.forEach((m) => {
+    data.messages.forEach((m, index) => {
       addMessage(
         m.role,
         m.content,
@@ -276,9 +283,12 @@ async function loadConversation(id) {
         m.usage,
         m.entities || [],
         m.actions || [],
+        m.choices?.length ? m.choices : clientQuestionChoices(m.content, m.entities),
+        m.reply_context || data.messages[index - 1]?.content || "",
       );
       state.evidence = m.evidence || state.evidence;
     });
+    syncReplyButtons();
     renderEvidence();
     renderHistory();
     await loadContext();
@@ -286,6 +296,10 @@ async function loadConversation(id) {
     scrollBottom();
   } catch (e) {
     toast(e.message);
+  } finally {
+    state.choosingReply = false;
+    renderMode();
+    syncReplyButtons();
   }
 }
 function renderConnections() {
@@ -300,7 +314,7 @@ function renderConnections() {
     );
     const remove = node("button", "text-button", "Remove");
     remove.onclick = async () => {
-      if (state.busy || state.executingActions.size) return;
+      if (state.busy || state.choosingReply || state.executingActions.size) return;
       try {
         await api("/api/connectors/" + c.id, { method: "DELETE" });
         await loadSession();
@@ -380,9 +394,9 @@ function renderMode() {
   state.mode = state.mode === "write" ? "write" : "read";
   const write = state.mode === "write";
   $("#client-select").disabled =
-    state.busy || state.executingActions.size > 0 || !state.connected;
-  $("#new-chat").disabled = state.busy || state.executingActions.size > 0;
-  $("#send").disabled = state.modeChanging || state.executingActions.size > 0;
+    state.busy || state.choosingReply || state.executingActions.size > 0 || !state.connected;
+  $("#new-chat").disabled = state.busy || state.choosingReply || state.executingActions.size > 0;
+  $("#send").disabled = state.modeChanging || state.choosingReply || state.executingActions.size > 0;
   document.body.classList.toggle("write-mode", write);
   $$("[data-mode]").forEach((button) => {
     button.setAttribute(
@@ -391,13 +405,14 @@ function renderMode() {
     );
     button.disabled =
       state.busy ||
+      state.choosingReply ||
       state.modeChanging ||
       state.executingActions.size > 0 ||
       !state.connected;
   });
   $("#mode-description").textContent = write
-    ? (state.client ? "Changes are proposed for review. Nothing runs until you approve it." : "Select one client to prepare and review system changes.")
-    : "Investigate freely. Tools only read your connected sources.";
+    ? (state.client ? "Review each change before it runs." : "Select a client to prepare changes.")
+    : "Read only.";
   $("#context-mode").textContent = write
     ? "Write · Review required"
     : "Read · No changes";
@@ -413,6 +428,7 @@ function renderMode() {
 async function changeMode(mode) {
   if (
     state.busy ||
+    state.choosingReply ||
     state.modeChanging ||
     state.executingActions.size ||
     mode === state.mode
@@ -719,6 +735,8 @@ function addMessage(
   usage = null,
   entities = [],
   actions = [],
+  choices = [],
+  replyContext = "",
 ) {
   const article = node("article", "message " + role);
   if (role === "assistant") {
@@ -747,10 +765,115 @@ function addMessage(
     article.append(proposals);
     registerActions(actions);
     renderArticleActions(article, actions);
+    renderReplies(article, choices, replyContext);
     if (content) addAnswerFooter(article, content, entities, usage);
   }
   $("#messages").append(article);
   return article;
+}
+function syncReplyButtons() {
+  const latest = $$(".message.assistant").at(-1);
+  $$(".reply-button").forEach((button) => {
+    button.disabled = state.busy || state.choosingReply || state.modeChanging || state.executingActions.size > 0 ||
+      button.closest(".message") !== latest;
+  });
+}
+async function answerChoice(choice, original) {
+  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
+  state.choosingReply = true;
+  renderMode();
+  syncReplyButtons();
+  try {
+    // Use the complete workspace inventory, not a previous client's filtered view.
+    if (choice.client_id) {
+      const context = await api("/api/context");
+      state.inventory = context.inventory;
+      renderClientOptions();
+    }
+    const request = replyRequest(choice, original, state.client, state.inventory?.clients || []);
+    if (request.restart) {
+      newConversation(true);
+      state.client = request.client;
+      $("#client-select").value = state.client;
+      await loadContext();
+      renderMode();
+    }
+    $("#message").value = "";
+    await sendMessage(request.message, true);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.choosingReply = false;
+    renderMode();
+    syncReplyButtons();
+  }
+}
+function renderReplies(article, choices = [], original = "") {
+  $(".reply-options", article)?.remove();
+  if (!Array.isArray(choices) || !choices.length) return;
+  const group = node("div", "reply-options");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Answer this question");
+  choices.slice(0, 8).forEach((choice) => {
+    if (typeof choice?.label !== "string") return;
+    const button = node("button", "button reply-button", choice.label);
+    button.type = "button";
+    button.onclick = () => answerChoice(choice, original);
+    group.append(button);
+  });
+  article.append(group);
+  syncReplyButtons();
+}
+
+const clientPicker = node("dialog", "client-picker");
+clientPicker.id = "client-picker";
+clientPicker.setAttribute("aria-labelledby", "client-picker-title");
+document.body.append(clientPicker);
+async function startPrompt(button) {
+  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
+  if (!state.connected) return openDialog("login");
+  const prompt = button.dataset.prompt;
+  if (state.client || button.dataset.clientRequired !== "true") return sendMessage(prompt);
+  state.choosingReply = true;
+  renderMode();
+  try {
+    await loadContext();
+    const clients = state.inventory?.clients || [];
+    if (clients.length === 1) {
+      state.choosingReply = false;
+      return await answerChoice({ client_id: clients[0].client_id, label: clients[0].name }, prompt);
+    }
+    clientPicker.replaceChildren();
+    const head = node("div", "dialog-head"), title = node("h2", "", "Choose a client"), close = node("button", "icon-button", "×");
+    title.id = "client-picker-title";
+    close.type = "button";
+    close.setAttribute("aria-label", "Close client picker");
+    close.onclick = () => clientPicker.close();
+    head.append(title, close);
+    const filter = node("input", "client-filter");
+    filter.type = "search";
+    filter.placeholder = "Find a client";
+    filter.setAttribute("aria-label", "Find a client");
+    const options = node("div", "client-options");
+    function paintClients() {
+      options.replaceChildren();
+      clients.filter((client) => (client.name || client.client_id).toLowerCase().includes(filter.value.toLowerCase())).forEach((client) => {
+        const pick = node("button", "button", client.name || client.client_id);
+        pick.type = "button";
+        pick.onclick = () => {
+          clientPicker.close();
+          answerChoice({ label: client.name || client.client_id, client_id: client.client_id }, prompt);
+        };
+        options.append(pick);
+      });
+      if (!options.children.length) options.append(node("p", "muted", "No matching clients."));
+    }
+    filter.oninput = paintClients;
+    paintClients();
+    clientPicker.append(head, filter, options);
+    clientPicker.showModal();
+  } catch (error) { toast(error.message); }
+  finally { state.choosingReply = false; renderMode(); syncReplyButtons(); }
 }
 function addAnswerFooter(article, content, entities, usage) {
   $(".message-actions", article)?.remove();
@@ -907,7 +1030,7 @@ function renderActionReview(action) {
     eligible = actionEligibility(action, {
       mode: state.mode,
       clientId: state.client,
-      busy: state.busy,
+      busy: state.busy || state.choosingReply,
       executing: state.executingActions.has(action.id) || state.reviewLoading,
     });
   $("#action-title").textContent = action.label || "Review proposed change";
@@ -1019,7 +1142,7 @@ async function executeAction() {
     !actionEligibility(action, {
       mode: state.mode,
       clientId: state.client,
-      busy: state.busy,
+      busy: state.busy || state.choosingReply,
       executing: state.executingActions.has(id),
     }).allowed
   )
@@ -1099,7 +1222,7 @@ function renderEvidence() {
       node(
         "p",
         "muted evidence-empty",
-        "Source reads appear here as Chat investigates.",
+        "No sources read yet.",
       ),
     );
     return;
@@ -1126,8 +1249,8 @@ function scrollBottom() {
   el.scrollTop = el.scrollHeight;
   updateScrollAffordance();
 }
-async function sendMessage(message) {
-  if (state.busy || state.modeChanging || state.executingActions.size) return;
+async function sendMessage(message, fromChoice = false) {
+  if (state.busy || (state.choosingReply && fromChoice !== true) || state.modeChanging || state.executingActions.size) return;
   if (!state.connected) {
     openDialog("login");
     return;
@@ -1220,6 +1343,7 @@ async function sendMessage(message) {
       paintNow();
       preserveReadingPosition(() => {
         renderArticleActions(article, actions);
+        renderReplies(article, event.choices || clientQuestionChoices(answer, entities), event.reply_context || message);
         addAnswerFooter(article, answer, entities, event.usage);
       });
     }
@@ -1488,6 +1612,7 @@ $("#new-chat").onclick = newConversation;
 $("#chat-nav").onclick = newConversation;
 $("#chat-form").onsubmit = (e) => {
   e.preventDefault();
+  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
   const message = $("#message").value.trim();
   if (message) {
     $("#message").value = "";
@@ -1501,16 +1626,11 @@ $("#message").onkeydown = (e) => {
   }
 };
 $$("[data-prompt]").forEach(
-  (b) =>
-    (b.onclick = () => {
-      if (state.busy) return;
-      $("#message").value = b.dataset.prompt;
-      $("#message").focus();
-    }),
+  (button) => (button.onclick = () => startPrompt(button)),
 );
 $("#stop").onclick = () => state.controller?.abort();
 $("#disconnect").onclick = async () => {
-  if (state.busy || state.executingActions.size) {
+  if (state.busy || state.choosingReply || state.executingActions.size) {
     toast("Finish the current response or action before disconnecting.");
     return;
   }

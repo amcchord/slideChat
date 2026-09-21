@@ -492,6 +492,8 @@ def create_app(test_config=None):
                                     "usage": event["usage"],
                                     "entities": event.get("entities", []),
                                     "actions": event.get("actions", []),
+                                    "choices": event.get("choices", []),
+                                    "reply_context": event.get("reply_context", ""),
                                 },
                             ]
                         )
