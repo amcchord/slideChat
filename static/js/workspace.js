@@ -139,17 +139,23 @@ async function loadContext() {
     $("#stat-" + name).textContent = "—";
   });
   $("#context-sources").replaceChildren();
+  const requestedClient = state.client;
   const data = await api(
-    "/api/context?client_id=" + encodeURIComponent(state.client),
+    "/api/context?client_id=" + encodeURIComponent(requestedClient),
   ).catch((error) => {
+    if (requestedClient !== state.client) return null;
     $("#slide-status").textContent = "Context unavailable";
     throw error;
   });
-  state.context = data;
-  if (!state.client) {
+  if (!data) return;
+  // The initial inventory can arrive after the user reopens a client conversation.
+  // Keep its selector options, but never replace that client's context with stale counts.
+  if (!requestedClient) {
     state.inventory = data.inventory;
     renderClientOptions();
   }
+  if (requestedClient !== state.client) return;
+  state.context = data;
   $("#stat-clients").textContent = data.counts.clients;
   $("#stat-devices").textContent = data.counts.devices;
   $("#stat-agents").textContent = data.counts.agents;
