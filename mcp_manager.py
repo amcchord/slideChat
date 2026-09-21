@@ -3,7 +3,8 @@ import json
 import subprocess
 import logging
 from typing import Dict, List, Optional, Any
-import tempfile
+import hashlib
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -16,73 +17,60 @@ class MCPManager:
     def __init__(self):
         # Path to the slide-mcp-server binary
         self.mcp_server_path = os.path.join(os.path.dirname(__file__), 'mcp', 'slide-mcp-server')
-        self._cached_tools = None
-        self._cache_time = 0
+        self._tools_by_account = {}
+        self._cache_lock = threading.Lock()
         self._cache_timeout = 300  # 5 minutes cache for tools
         
-    def _get_available_tools(self, api_key: str) -> List[Dict]:
-        """
-        Get the list of available tools from the MCP server using direct call
-        """
-        # Check cache first
-        current_time = time.time()
-        if self._cached_tools and (current_time - self._cache_time) < self._cache_timeout:
-            return self._cached_tools
-            
-        try:
-            # Create a temporary script to get tools
-            script_content = '''#!/bin/bash
-set -e
-
-# Initialize MCP session and get tools
-{
-    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.5.0"}}}'
-    echo '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
-    echo '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
-} | "$1" --api-key "$2" --tools full-safe 2>/dev/null | grep -E '{"jsonrpc":"2.0","id":2' | head -1
-'''
-            
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-                f.write(script_content)
-                script_path = f.name
-            
+    def _request(self, method: str, params: Dict, api_key: str, timeout: int) -> Dict:
+        """Send JSON directly to stdio; tolerate notifications and JSON key order."""
+        request_id = 3 if method == 'tools/call' else 2
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2024-11-05", "capabilities": {},
+                "clientInfo": {"name": "slide-chat-client", "version": "1.6.0"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        ]
+        env = dict(os.environ, SLIDE_API_KEY=api_key)
+        result = subprocess.run(
+            [self.mcp_server_path, '--tools', 'full-safe'],
+            input='\n'.join(json.dumps(message) for message in messages) + '\n',
+            capture_output=True, text=True, encoding='utf-8', timeout=timeout, env=env,
+        )
+        # Parse the protocol, not a grep pattern. Never copy process output into logs.
+        for line in result.stdout.splitlines():
             try:
-                os.chmod(script_path, 0o755)
-                
-                # Execute the script
-                result = subprocess.run(
-                    [script_path, self.mcp_server_path, api_key],
-                    capture_output=True,
-                    text=True,
-                    encoding='utf-8',
-                    timeout=30
-                )
-                
-                if result.returncode == 0 and result.stdout.strip():
-                    response_data = json.loads(result.stdout.strip())
-                    if "result" in response_data and "tools" in response_data["result"]:
-                        tools = response_data["result"]["tools"]
-                        
-                        # Cache the tools
-                        self._cached_tools = tools
-                        self._cache_time = current_time
-                        
-                        logger.info(f"Retrieved {len(tools)} tools from MCP server")
-                        return tools
-                else:
-                    logger.error(f"Failed to get tools. Return code: {result.returncode}, stderr: {result.stderr}")
-                    
-            finally:
-                # Clean up the temporary script
-                try:
-                    os.unlink(script_path)
-                except:
-                    pass
-                    
-        except Exception as e:
-            logger.error(f"Error getting tools: {e}")
-            
-        return []
+                response = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(response, dict) or response.get('id') != request_id:
+                continue
+            if 'error' in response:
+                return {'error': 'The Slide tool could not complete the request.'}
+            return response.get('result', {})
+        return {'error': 'No response from the Slide tools service. Please retry.'}
+
+    def _get_available_tools(self, api_key: str) -> List[Dict]:
+        """Cache metadata per credential so account permissions cannot bleed across sessions."""
+        cache_key = hashlib.sha256(api_key.encode()).hexdigest()
+        now = time.monotonic()
+        with self._cache_lock:
+            entry = self._tools_by_account.get(cache_key)
+            if entry and now - entry[0] < self._cache_timeout:
+                return entry[1]
+        try:
+            response = self._request('tools/list', {}, api_key, timeout=30)
+            tools = response.get('tools', [])
+            if tools:
+                with self._cache_lock:
+                    self._tools_by_account = {k: v for k, v in self._tools_by_account.items() if now - v[0] < self._cache_timeout}
+                    if len(self._tools_by_account) >= 100:
+                        self._tools_by_account.pop(next(iter(self._tools_by_account)))
+                    self._tools_by_account[cache_key] = (now, tools)
+            return tools
+        except (OSError, subprocess.TimeoutExpired):
+            logger.warning('Slide tool discovery unavailable')
+            return []
     
     def get_tools_for_claude(self, api_key: str) -> List[Dict]:
         """
@@ -143,76 +131,14 @@ set -e
             return mcp_schema
     
     def call_tool(self, tool_name: str, arguments: Dict, api_key: str) -> Dict:
-        """
-        Call a tool on the MCP server using direct subprocess call
-        """
+        # Tool calls may mutate the fleet. Never retry automatically.
         try:
-            # Create a temporary script to call the tool
-            script_content = '''#!/bin/bash
-set -e
-
-# Initialize MCP session and call tool
-{
-    echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {"roots": {"listChanged": true}, "sampling": {}}, "clientInfo": {"name": "slide-chat-client", "version": "1.5.0"}}}'
-    echo '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
-    echo "$3"
-} | "$1" --api-key "$2" --tools full-safe 2>/dev/null | grep -E '{"jsonrpc":"2.0","id":3' | head -1
-'''
-            
-            # Prepare the tool call request
-            tool_request = {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                }
-            }
-            
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-                f.write(script_content)
-                script_path = f.name
-            
-            try:
-                os.chmod(script_path, 0o755)
-                
-                # Execute the script
-                result = subprocess.run(
-                    [script_path, self.mcp_server_path, api_key, json.dumps(tool_request)],
-                    capture_output=True,
-                    text=True,
-                    encoding='utf-8',
-                    timeout=60
-                )
-                
-                if result.returncode == 0 and result.stdout.strip():
-                    response_data = json.loads(result.stdout.strip())
-                    
-                    if "result" in response_data:
-                        return response_data["result"]
-                    elif "error" in response_data:
-                        return {"error": f"MCP server error: {response_data['error']}"}
-                    else:
-                        return {"error": "Unexpected response format from MCP server"}
-                else:
-                    error_msg = f"MCP server call failed. Return code: {result.returncode}"
-                    if result.stderr:
-                        error_msg += f", stderr: {result.stderr}"
-                    return {"error": error_msg}
-                    
-            finally:
-                # Clean up the temporary script
-                try:
-                    os.unlink(script_path)
-                except:
-                    pass
-                    
+            return self._request('tools/call', {'name': tool_name, 'arguments': arguments}, api_key, timeout=60)
         except subprocess.TimeoutExpired:
-            return {"error": "MCP server call timed out"}
-        except Exception as e:
-            logger.error(f"Error calling tool {tool_name}: {e}")
-            return {"error": str(e)}
+            return {'error': 'Slide tool timed out. Check the operation status before trying again.'}
+        except OSError:
+            logger.warning('Slide tools service unavailable')
+            return {'error': 'The Slide tools service is unavailable.'}
     
     def is_server_available(self) -> bool:
         """
@@ -232,4 +158,4 @@ set -e
 
 
 # Global MCP manager instance
-mcp_manager = MCPManager() 
+mcp_manager = MCPManager()

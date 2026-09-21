@@ -9,14 +9,17 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css"> 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/console.css') }}">
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem('recipes-theme')||'light'}catch(e){}</script>
 </head>
 <body>
+    <header class="suite-bar"><a href="https://slide.recipes" class="suite-brand"><img src="{{ url_for('static', filename='slide-mark.svg') }}" alt="Slide"> <strong>slide</strong><span>Chat</span></a><a href="https://slide.recipes">← Recipes workspace</a><button id="suite-theme" aria-label="Switch color theme">◐</button></header>
     <div class="app-container">
         <!-- Chat Panel (Left) -->
         <div class="chat-panel">
             <div class="chat-header">
                 <div class="chat-header-left">
-                    <h1>Slide Chat</h1>
+                    <h1>Ask Slide</h1>
                     <button id="api-key-button" class="api-key-button" title="Configure Slide API Key">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path>
@@ -50,12 +53,12 @@
                 <form id="chat-form" autocomplete="off">
                     <div class="input-wrapper">
                         <textarea 
-                            id="message-input" 
+                            id="message-input" aria-label="Message Slide"
                             placeholder="Type your message to Slide..." 
                             rows="3"
                             maxlength="4000"
                         ></textarea>
-                        <button type="submit" id="send-button" class="send-button">
+                        <button type="submit" id="send-button" aria-label="Send message" class="send-button">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="22" y1="2" x2="11" y2="13"></line>
                                 <polygon points="22,2 15,22 11,13 2,9"></polygon>
@@ -72,7 +75,7 @@
         <!-- Artifact Panel (Right) -->
         <div class="artifact-panel">
             <div class="artifact-header">
-                <h2>Artifacts</h2>
+                <h2>Your workspace</h2>
                 <div class="artifact-controls">
                     <div class="context-usage-indicator" id="context-usage-indicator" title="Context window usage">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -99,8 +102,8 @@
                             <polyline points="21,15 16,10 5,21"></polyline>
                         </svg>
                     </div>
-                    <h3>No artifacts yet</h3>
-                    <p>When Slider creates HTML pages, code, or other artifacts, they'll appear here for you to view and interact with.</p>
+                    <h3>A place for the details</h3>
+                    <p>Reports, code, and visual answers appear here as you work with Slide.</p>
                 </div>
             </div>
         </div>
@@ -179,5 +182,6 @@
     </div>
     
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script>document.getElementById('suite-theme').addEventListener('click',function(){const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;try{localStorage.setItem('recipes-theme',theme)}catch(e){}});</script>
 </body>
-</html> 
+</html>

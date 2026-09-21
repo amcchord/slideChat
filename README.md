@@ -342,4 +342,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Built with ❤️ for enterprise backup and disaster recovery management**
 
-*For questions, issues, or feature requests, please visit our [GitHub Issues](https://github.com/amcchord/slideChat/issues) page.* 
+*For questions, issues, or feature requests, please visit our [GitHub Issues](https://github.com/amcchord/slideChat/issues) page.*
+
+## September 2026 modernization
+
+See [the modernization notes](docs/modernization.md) for scope, API behavior, validation, and deployment considerations.
