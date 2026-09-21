@@ -1,4 +1,13 @@
-"use strict";
+import {
+  createMarkdownRenderer,
+  createEventDecoder,
+  copyMarkdown,
+  entityMap,
+  actionState,
+  actionEligibility,
+  toolLabel,
+} from "./rendering.mjs";
+("use strict");
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = {
@@ -10,6 +19,12 @@ const state = {
   evidence: [],
   busy: false,
   controller: null,
+  mode: "read",
+  modeChanging: false,
+  actions: new Map(),
+  executingActions: new Set(),
+  reviewActionId: null,
+  reviewLoading: false,
 };
 const paths = {
   chat: "M4 4h16v12H9l-5 4V4Z",
@@ -74,17 +89,25 @@ function setBusy(busy) {
   $("#client-select").disabled = busy || !state.connected;
   $("#new-chat").disabled = busy;
   $("#stream-status").classList.toggle("hidden", !busy);
+  renderMode();
+}
+function closeNavigation() {
+  $(".sidebar").classList.remove("mobile-open");
+  $("#mobile-menu").setAttribute("aria-expanded", "false");
 }
 function newConversation() {
-  if (state.busy) return;
+  if (state.busy || state.executingActions.size) return;
+  closeNavigation();
   state.conversation = null;
   state.evidence = [];
+  hideEntity();
   $("#messages").replaceChildren();
   $("#welcome").classList.remove("hidden");
   renderEvidence();
   renderHistory();
   $("#chat-scroll").scrollTop = 0;
   $("#message").focus({ preventScroll: true });
+  updateScrollAffordance();
 }
 async function loadSession() {
   const data = await api("/api/session");
@@ -106,6 +129,7 @@ async function loadSession() {
     renderHistory();
     renderConnections();
   }
+  renderMode();
   return data;
 }
 async function loadContext() {
@@ -205,6 +229,7 @@ function renderHistory() {
     const remove = node("button", "history-delete", "×");
     remove.setAttribute("aria-label", "Delete " + c.title);
     remove.onclick = async () => {
+      if (state.busy || state.executingActions.size) return;
       try {
         await api("/api/conversations/" + c.id, { method: "DELETE" });
         if (state.conversation === c.id) newConversation();
@@ -226,9 +251,11 @@ function renderHistory() {
     );
 }
 async function loadConversation(id) {
-  if (state.busy) return;
+  if (state.busy || state.executingActions.size) return;
+  hideEntity();
   try {
     const data = await api("/api/conversations/" + id);
+    closeNavigation();
     state.conversation = id;
     state.client = data.client_id;
     $("#client-select").value = state.client;
@@ -236,12 +263,20 @@ async function loadConversation(id) {
     $("#messages").replaceChildren();
     state.evidence = [];
     data.messages.forEach((m) => {
-      addMessage(m.role, m.content, m.evidence || [], m.usage);
+      addMessage(
+        m.role,
+        m.content,
+        m.evidence || [],
+        m.usage,
+        m.entities || [],
+        m.actions || [],
+      );
       state.evidence = m.evidence || state.evidence;
     });
     renderEvidence();
     renderHistory();
     await loadContext();
+    renderMode();
     scrollBottom();
   } catch (e) {
     toast(e.message);
@@ -259,6 +294,7 @@ function renderConnections() {
     );
     const remove = node("button", "text-button", "Remove");
     remove.onclick = async () => {
+      if (state.busy || state.executingActions.size) return;
       try {
         await api("/api/connectors/" + c.id, { method: "DELETE" });
         await loadSession();
@@ -334,138 +370,720 @@ function connectorFields() {
       ".json,.csv,application/json,text/csv";
   }
 }
-function addMessage(role, content, evidence = [], usage = null) {
+function renderMode() {
+  state.mode = state.mode === "write" ? "write" : "read";
+  const write = state.mode === "write";
+  $("#client-select").disabled =
+    state.busy || state.executingActions.size > 0 || !state.connected;
+  $("#new-chat").disabled = state.busy || state.executingActions.size > 0;
+  $("#send").disabled = state.modeChanging || state.executingActions.size > 0;
+  document.body.classList.toggle("write-mode", write);
+  $$("[data-mode]").forEach((button) => {
+    button.setAttribute(
+      "aria-pressed",
+      String(button.dataset.mode === state.mode),
+    );
+    button.disabled =
+      state.busy ||
+      state.modeChanging ||
+      state.executingActions.size > 0 ||
+      !state.connected;
+  });
+  $("#mode-description").textContent = write
+    ? (state.client ? "Changes are proposed for review. Nothing runs until you approve it." : "Select one client to prepare and review system changes.")
+    : "Investigate freely. Tools only read your connected sources.";
+  $("#context-mode").textContent = write
+    ? "Write · Review required"
+    : "Read · No changes";
+  $("#tool-safety-label").textContent = write
+    ? "Credentials stay encrypted. Every system change needs your explicit review."
+    : "Credentials stay encrypted. Read mode cannot change client systems.";
+  $("#composer-scope").textContent = state.openai_configured
+    ? "GPT-6 Astra"
+    : "Add an OpenAI key in Connections";
+  if ($("#action-dialog").open && state.reviewActionId)
+    renderActionReview(state.actions.get(state.reviewActionId));
+}
+async function changeMode(mode) {
+  if (
+    state.busy ||
+    state.modeChanging ||
+    state.executingActions.size ||
+    mode === state.mode
+  )
+    return;
+  if (!state.connected) {
+    openDialog("login");
+    return;
+  }
+  if (mode === "write" && !state.client) {
+    toast("Select a client before enabling Write mode.");
+    $("#client-select").focus();
+    return;
+  }
+  state.modeChanging = true;
+  renderMode();
+  try {
+    const result = await api("/api/mode", { method: "POST", body: { mode } });
+    state.mode = result.mode === "write" ? "write" : "read";
+    toast(
+      state.mode === "write"
+        ? "Write mode enabled. Every change requires review."
+        : "Read mode enabled. Tools only read data.",
+    );
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.modeChanging = false;
+    renderMode();
+  }
+}
+function nearBottom() {
+  const el = $("#chat-scroll");
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+}
+function updateScrollAffordance() {
+  $("#latest-message").classList.toggle(
+    "hidden",
+    nearBottom() || !$("#messages").children.length,
+  );
+}
+function preserveReadingPosition(update, follow = nearBottom()) {
+  update();
+  if (follow) scrollBottom();
+  else updateScrollAffordance();
+}
+const entityTypeLabels = {
+  agent: "Agent",
+  device: "Slide device",
+  client: "Client",
+  backup: "Backup",
+  snapshot: "Snapshot",
+  alert: "Alert",
+};
+function humanText(value) {
+  return String(value ?? "")
+    .replaceAll("_", " ")
+    .replaceAll("-", " ");
+}
+function fieldValue(value) {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return typeof value === "object" && value !== null
+    ? JSON.stringify(value)
+    : String(value ?? "Not reported");
+}
+function entityTone(entity) {
+  const status = String(entity.status || "").toLowerCase();
+  if (["failed", "error", "offline", "critical", "unhealthy"].includes(status))
+    return "danger";
+  if (
+    ["warning", "paused", "pending", "open", "unresolved"].includes(status) ||
+    (entity.type === "alert" && status === "active")
+  )
+    return "warning";
+  if (
+    [
+      "success",
+      "succeeded",
+      "completed",
+      "online",
+      "healthy",
+      "resolved",
+      "running",
+    ].includes(status)
+  )
+    return "success";
+  return "neutral";
+}
+let activeEntity = null,
+  entityHideTimer;
+const entityPanel = $("#entity-popover");
+function hideEntity({ restoreFocus = false } = {}) {
+  clearTimeout(entityHideTimer);
+  if (!activeEntity) return;
+  const anchor = activeEntity.anchor;
+  anchor?.setAttribute("aria-expanded", "false");
+  activeEntity = null;
+  if (
+    typeof entityPanel.hidePopover === "function" &&
+    entityPanel.matches(":popover-open")
+  )
+    entityPanel.hidePopover();
+  entityPanel.classList.add("hidden");
+  if (restoreFocus && anchor?.isConnected) {
+    anchor.dataset.suppressPreview = "true";
+    anchor.focus({ preventScroll: true });
+  }
+}
+function positionEntity() {
+  if (!activeEntity?.anchor?.isConnected) {
+    hideEntity();
+    return;
+  }
+  const rect = activeEntity.anchor.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth,
+    viewportHeight = window.innerHeight;
+  entityPanel.style.width = `${Math.min(350, viewportWidth - 24)}px`;
+  const height = Math.min(entityPanel.offsetHeight || 280, viewportHeight - 24);
+  entityPanel.style.maxHeight = `${viewportHeight - 24}px`;
+  entityPanel.style.left = `${Math.max(12, Math.min(rect.left, viewportWidth - entityPanel.offsetWidth - 12))}px`;
+  entityPanel.style.top = `${Math.max(12, rect.bottom + height + 9 < viewportHeight ? rect.bottom + 8 : rect.top - height - 8)}px`;
+}
+function showEntity(entity, anchor, pinned = false) {
+  clearTimeout(entityHideTimer);
+  if (activeEntity?.pinned && !pinned) return;
+  activeEntity?.anchor?.setAttribute("aria-expanded", "false");
+  activeEntity = {
+    entity,
+    anchor,
+    article: anchor.closest(".message"),
+    pinned,
+  };
+  entityPanel.replaceChildren();
+  const head = node("div", "entity-popover-heading");
+  const title = node("div");
+  title.append(
+    node("span", "eyebrow", entityTypeLabels[entity.type]),
+    node("strong", "", entity.label),
+  );
+  const close = node("button", "icon-button", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close entity details");
+  close.onclick = () => hideEntity({ restoreFocus: true });
+  head.append(title, close);
+  entityPanel.append(head);
+  const meta = node("div", "entity-popover-meta");
+  meta.append(node("code", "", entity.id));
+  if (entity.status)
+    meta.append(
+      node(
+        "span",
+        `entity-status ${entityTone(entity)}`,
+        humanText(entity.status),
+      ),
+    );
+  entityPanel.append(meta);
+  const fields = node("dl", "entity-fields");
+  (Array.isArray(entity.fields) ? entity.fields : []).forEach((field) => {
+    if (!field || typeof field.label !== "string") return;
+    fields.append(
+      node("dt", "", field.label),
+      node("dd", "", fieldValue(field.value)),
+    );
+  });
+  if (!fields.children.length)
+    fields.append(
+      node("dt", "", "Details"),
+      node("dd", "", "No additional fields were returned."),
+    );
+  entityPanel.append(fields);
+  const footer = node("div", "entity-popover-footer");
+  if (entity.observed_at)
+    footer.append(
+      node(
+        "small",
+        "muted",
+        "Observed " + new Date(entity.observed_at).toLocaleString(),
+      ),
+    );
+  if (Array.isArray(entity.source_ids) && entity.source_ids.length)
+    footer.append(
+      node("small", "muted", "Evidence " + entity.source_ids.join(", ")),
+    );
+  const copy = node("button", "text-button", "Copy ID");
+  copy.type = "button";
+  copy.onclick = () =>
+    navigator.clipboard
+      .writeText(entity.id)
+      .then(() => toast("ID copied."))
+      .catch(() =>
+        toast("Clipboard unavailable. Select and copy the displayed ID."),
+      );
+  footer.append(copy);
+  entityPanel.append(footer);
+  entityPanel.classList.remove("hidden");
+  if (
+    typeof entityPanel.showPopover === "function" &&
+    !entityPanel.matches(":popover-open")
+  )
+    entityPanel.showPopover();
+  anchor.setAttribute("aria-expanded", "true");
+  positionEntity();
+  if (pinned) entityPanel.focus({ preventScroll: true });
+}
+function createEntityChip(entity) {
+  const button = node("button", `entity-chip entity-${entity.type}`);
+  button.type = "button";
+  button.dataset.entityRef = entity.ref;
+  button.setAttribute("aria-haspopup", "dialog");
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-controls", "entity-popover");
+  button.setAttribute(
+    "aria-label",
+    `${entityTypeLabels[entity.type]} ${entity.label}. Show details.`,
+  );
+  button.append(
+    node("span", "entity-kind", entityTypeLabels[entity.type]),
+    node("span", "entity-label", entity.label),
+  );
+  if (entity.status) {
+    const dot = node("span", `entity-dot ${entityTone(entity)}`);
+    dot.setAttribute("aria-hidden", "true");
+    button.append(dot);
+  }
+  button.addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "touch") showEntity(entity, button);
+  });
+  button.addEventListener("pointerleave", () => {
+    if (!activeEntity?.pinned)
+      entityHideTimer = setTimeout(() => hideEntity(), 180);
+  });
+  button.addEventListener("focus", () => {
+    if (button.dataset.suppressPreview) {
+      delete button.dataset.suppressPreview;
+      return;
+    }
+    showEntity(entity, button);
+  });
+  button.addEventListener("blur", () => {
+    if (!activeEntity?.pinned)
+      entityHideTimer = setTimeout(() => {
+        if (!entityPanel.contains(document.activeElement)) hideEntity();
+      }, 100);
+  });
+  button.addEventListener("click", () => {
+    if (activeEntity?.anchor === button && activeEntity.pinned) hideEntity();
+    else showEntity(entity, button, true);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideEntity();
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      showEntity(entity, button, true);
+    }
+  });
+  return button;
+}
+const renderMarkdown = createMarkdownRenderer({
+  document,
+  onEvidence: showEvidence,
+  createEntityChip,
+});
+function paintAnswer(
+  article,
+  content,
+  evidence = [],
+  entities = [],
+  streaming = false,
+) {
+  const focused = document.activeElement;
+  // Do not replace a table/chip currently being read with the keyboard. A queued paint runs after focus leaves.
+  if (
+    $(".message-body", article).contains(focused) &&
+    focused !== document.body
+  ) {
+    article.pendingPaint = () =>
+      paintAnswer(article, content, evidence, entities, streaming);
+    return;
+  }
+  article.pendingPaint = null;
+  const activeRef =
+    activeEntity?.article === article ? activeEntity.entity.ref : null;
+  renderMarkdown($(".message-body", article), content, evidence, entities, {
+    streaming,
+  });
+  if (activeRef && activeEntity) {
+    const replacement = $$(".entity-chip", article).find(
+      (chip) => chip.dataset.entityRef === activeRef,
+    );
+    if (replacement) {
+      activeEntity.anchor = replacement;
+      replacement.setAttribute("aria-expanded", "true");
+      positionEntity();
+    } else hideEntity();
+  }
+}
+function addMessage(
+  role,
+  content,
+  evidence = [],
+  usage = null,
+  entities = [],
+  actions = [],
+) {
   const article = node("article", "message " + role);
   if (role === "assistant") {
-    const label = node("div", "message-label");
-    const img = node("img");
+    const label = node("div", "message-label"),
+      img = node("img");
     img.src = "/static/slide-mark.svg";
     img.alt = "";
     label.append(img, document.createTextNode("Slide Chat"));
-    if (usage)
-      label.append(
-        node(
-          "small",
-          "",
-          (usage.input_tokens + usage.output_tokens).toLocaleString() +
-            " tokens",
-        ),
-      );
     article.append(label);
   }
   const body = node("div", "message-body");
   article.append(body);
   if (role === "user") body.textContent = content;
-  else renderMarkdown(body, content, evidence);
-  if (role === "assistant" && content) {
-    const actions = node("div", "message-actions");
-    const copy = node("button", "text-button", "Copy answer");
-    copy.onclick = () =>
-      navigator.clipboard
-        .writeText(content)
-        .then(() => toast("Answer copied."));
-    actions.append(copy);
-    if (state.conversation) {
-      const exportLink = node("a", "text-button", "Export with evidence");
-      exportLink.href = "/api/conversations/" + state.conversation + "/export";
-      actions.append(exportLink);
-    }
-    article.append(actions);
+  else paintAnswer(article, content, evidence, entities);
+  article.addEventListener("focusout", () =>
+    setTimeout(() => {
+      if (article.pendingPaint && !body.contains(document.activeElement)) {
+        const paint = article.pendingPaint;
+        article.pendingPaint = null;
+        preserveReadingPosition(paint);
+      }
+    }, 0),
+  );
+  if (role === "assistant") {
+    const proposals = node("div", "action-proposals");
+    article.append(proposals);
+    registerActions(actions);
+    renderArticleActions(article, actions);
+    if (content) addAnswerFooter(article, content, entities, usage);
   }
   $("#messages").append(article);
   return article;
 }
-// This renderer creates DOM nodes only. Raw model HTML, links, scripts and event attributes are never inserted.
-function inline(parent, text, evidence) {
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[S\d+\])/g;
-  let start = 0;
-  for (const match of text.matchAll(re)) {
-    parent.append(document.createTextNode(text.slice(start, match.index)));
-    const token = match[0];
-    if (token.startsWith("**"))
-      parent.append(node("strong", "", token.slice(2, -2)));
-    else if (token.startsWith("`"))
-      parent.append(node("code", "", token.slice(1, -1)));
-    else {
-      const source = evidence.find((e) => "[" + e.id + "]" === token);
-      if (source) {
-        const button = node("button", "citation", source.id);
-        button.onclick = () => showEvidence(source);
-        parent.append(button);
-      } else parent.append(document.createTextNode(token));
-    }
-    start = match.index + token.length;
+function addAnswerFooter(article, content, entities, usage) {
+  $(".message-actions", article)?.remove();
+  const footer = node("div", "message-actions");
+  const copy = node("button", "text-button", "Copy answer");
+  copy.type = "button";
+  copy.onclick = () =>
+    navigator.clipboard
+      .writeText(copyMarkdown(content, entities))
+      .then(() => toast("Answer copied with readable entity names."))
+      .catch(() =>
+        toast("Clipboard unavailable. Select the answer to copy it."),
+      );
+  footer.append(copy);
+  if (state.conversation) {
+    const link = node("a", "text-button", "Export with evidence");
+    link.href =
+      "/api/conversations/" +
+      encodeURIComponent(state.conversation) +
+      "/export";
+    footer.append(link);
   }
-  parent.append(document.createTextNode(text.slice(start)));
+  if (usage)
+    footer.append(
+      node(
+        "span",
+        "text-button",
+        (
+          (usage.input_tokens || 0) + (usage.output_tokens || 0)
+        ).toLocaleString() + " tokens",
+      ),
+    );
+  article.append(footer);
 }
-function renderMarkdown(parent, text, evidence) {
-  parent.replaceChildren();
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.startsWith("```")) {
-      const block = [];
-      while (++i < lines.length && !lines[i].startsWith("```"))
-        block.push(lines[i]);
-      parent.append(node("pre", "", block.join("\n")));
-      continue;
-    }
-    if (!line.trim()) continue;
+function registerActions(actions = [], fresh = false) {
+  actions.forEach((action) => {
+    if (!action || typeof action.id !== "string") return;
+    const known = state.actions.get(action.id);
     if (
-      line.includes("|") &&
-      i + 1 < lines.length &&
-      /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])
-    ) {
-      const table = node("table");
-      const headers = line
-        .split("|")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const tr = node("tr");
-      headers.forEach((cell) => {
-        const th = node("th");
-        inline(th, cell, evidence);
-        tr.append(th);
-      });
-      table.append(tr);
-      i++;
-      while (i + 1 < lines.length && lines[i + 1].includes("|")) {
-        const row = node("tr");
-        lines[++i]
-          .replace(/^\s*\||\|\s*$/g, "")
-          .split("|")
-          .forEach((cell) => {
-            const td = node("td");
-            inline(td, cell.trim(), evidence);
-            row.append(td);
-          });
-        table.append(row);
-      }
-      parent.append(table);
-      continue;
+      !fresh &&
+      known &&
+      ["succeeded", "failed", "unknown", "cancelled", "canceled"].includes(
+        known.status,
+      ) &&
+      action.status === "pending"
+    )
+      return;
+    state.actions.set(action.id, action);
+  });
+}
+const actionLabels = {
+  pending: "Review required",
+  succeeded: "Request accepted",
+  failed: "Failed",
+  unknown: "Outcome unconfirmed",
+  cancelled: "Cancelled",
+  canceled: "Cancelled",
+  expired: "Expired",
+  running: "Submitting",
+  executing: "Submitting",
+};
+function renderActionCard(action) {
+  const status = actionState(action),
+    card = node("section", "action-card");
+  card.dataset.actionId = action.id;
+  const top = node("div", "action-card-heading");
+  top.append(
+    node("strong", "", action.label || "Proposed change"),
+    node(
+      "span",
+      `action-status status-${status}`,
+      actionLabels[status] || humanText(status),
+    ),
+  );
+  card.append(top);
+  const target = node("div", "action-target");
+  target.append(
+    node("span", "muted", entityTypeLabels[action.target?.type] || "Target"),
+    node(
+      "strong",
+      "",
+      action.target?.label || action.target?.id || "Unknown target",
+    ),
+  );
+  card.append(target);
+  card.append(
+    node(
+      "p",
+      "action-summary",
+      action.result?.message ||
+        action.summary ||
+        "Review the exact effect before proceeding.",
+    ),
+  );
+  const controls = node("div", "action-card-controls");
+  const review = node(
+    "button",
+    "button small",
+    status === "pending" ? "Review action" : "View status",
+  );
+  review.type = "button";
+  review.onclick = () => openActionReview(action.id);
+  controls.append(review);
+  if (status === "pending") {
+    const cancel = node("button", "text-button", "Cancel proposal");
+    cancel.type = "button";
+    cancel.disabled = state.executingActions.has(action.id);
+    cancel.onclick = () => cancelAction(action.id);
+    controls.append(cancel);
+    controls.append(node("small", "muted", "Nothing has run yet."));
+  }
+  card.append(controls);
+  return card;
+}
+function renderArticleActions(article, actions) {
+  const proposals = $(".action-proposals", article);
+  if (!proposals) return;
+  proposals.replaceChildren(
+    ...actions.map((action) =>
+      renderActionCard(state.actions.get(action.id) || action),
+    ),
+  );
+}
+function refreshActionCards(id) {
+  $$(".action-card")
+    .filter((card) => card.dataset.actionId === id)
+    .forEach((card) =>
+      card.replaceWith(renderActionCard(state.actions.get(id))),
+    );
+}
+function actionFields(title, data) {
+  const section = node("section", "action-values");
+  section.append(node("h3", "", title));
+  const list = node("dl");
+  if (data && typeof data === "object" && !Array.isArray(data))
+    Object.entries(data).forEach(([key, value]) => {
+      list.append(
+        node("dt", "", humanText(key)),
+        node("dd", "", fieldValue(value)),
+      );
+    });
+  else
+    list.append(
+      node("dd", "", data === undefined ? "Not reported" : fieldValue(data)),
+    );
+  if (!list.children.length)
+    list.append(node("dd", "", "No existing value to change."));
+  section.append(list);
+  return section;
+}
+function renderActionReview(action) {
+  if (!action) return;
+  const status = actionState(action),
+    eligible = actionEligibility(action, {
+      mode: state.mode,
+      clientId: state.client,
+      busy: state.busy,
+      executing: state.executingActions.has(action.id) || state.reviewLoading,
+    });
+  $("#action-title").textContent = action.label || "Review proposed change";
+  $("#action-review-status").textContent =
+    actionLabels[status] || humanText(status);
+  $("#action-review-status").className = `action-status status-${status}`;
+  $("#action-target-label").textContent =
+    action.target?.label || action.target?.id || "Unknown target";
+  $("#action-target-id").textContent = action.target?.id || "";
+  $("#action-client-label").textContent =
+    state.inventory?.clients?.find((c) => c.client_id === action.client_id)
+      ?.name ||
+    action.client_id ||
+    "Unknown client";
+  $("#action-summary").textContent = action.summary || "";
+  $("#action-comparison").replaceChildren(
+    actionFields("Before", action.before),
+    actionFields("After", action.after),
+  );
+  const result = $("#action-result");
+  result.replaceChildren();
+  result.classList.toggle(
+    "hidden",
+    !action.result && !["unknown", "failed", "expired"].includes(status),
+  );
+  if (action.result?.message)
+    result.append(node("p", "", action.result.message));
+  else if (status === "expired")
+    result.append(
+      node(
+        "p",
+        "",
+        "This proposal expired. Ask Chat to prepare a fresh action using current data.",
+      ),
+    );
+  else if (status === "unknown")
+    result.append(
+      node(
+        "p",
+        "",
+        "The result is not confirmed. Refresh the action status before taking another step.",
+      ),
+    );
+  if (action.result?.data) {
+    const details = node("details");
+    details.append(
+      node("summary", "", "Returned evidence"),
+      node("pre", "", JSON.stringify(action.result.data, null, 2)),
+    );
+    result.append(details);
+  }
+  $("#action-expiry").textContent =
+    status === "pending" && action.expires_at
+      ? "Review expires " + new Date(action.expires_at * 1000).toLocaleString()
+      : "";
+  $("#action-review-note").textContent = eligible.reason;
+  $("#action-execute").disabled = !eligible.allowed;
+  $("#action-execute").classList.toggle("hidden", status !== "pending");
+  $("#action-execute").textContent = state.executingActions.has(action.id)
+    ? "Submitting…"
+    : action.label || "Execute action";
+  $("#action-execute").setAttribute(
+    "aria-label",
+    `${action.label || "Execute action"} for ${action.target?.label || action.target?.id || "the reviewed target"}`,
+  );
+  $("#action-cancel").classList.toggle("hidden", status !== "pending");
+  $("#action-cancel").disabled = state.executingActions.has(action.id);
+  $("#action-refresh").disabled = state.executingActions.has(action.id);
+}
+async function openActionReview(id) {
+  hideEntity();
+  state.reviewActionId = id;
+  state.reviewLoading = true;
+  if (!$("#action-dialog").open) $("#action-dialog").showModal();
+  $("#action-error").textContent = "";
+  $("#action-execute").disabled = true;
+  $("#action-refresh").disabled = true;
+  const known = state.actions.get(id);
+  if (known) renderActionReview(known);
+  $("#action-execute").disabled = true;
+  $("#action-review-note").textContent =
+    "Refreshing the target and current action status…";
+  try {
+    const response = await api("/api/actions/" + encodeURIComponent(id));
+    const action = response.action || response;
+    if (action.id !== id)
+      throw Error("The action returned an unexpected identity.");
+    registerActions([action], true);
+    refreshActionCards(id);
+    if (state.reviewActionId === id && $("#action-dialog").open) {
+      state.reviewLoading = false;
+      renderActionReview(action);
     }
-    const heading = line.match(/^(#{1,4})\s+(.*)/);
-    if (heading) {
-      const h = node(heading[1].length <= 2 ? "h2" : "h3");
-      inline(h, heading[2], evidence);
-      parent.append(h);
-      continue;
+  } catch (error) {
+    if (state.reviewActionId === id) {
+      $("#action-error").textContent = error.message;
+      $("#action-execute").disabled = true;
     }
-    const list = line.match(/^(?:[-*]|\d+\.)\s+(.*)/);
-    if (list) {
-      const ul = node(/^\d/.test(line) ? "ol" : "ul");
-      const li = node("li");
-      inline(li, list[1], evidence);
-      ul.append(li);
-      if (/^\d/.test(line)) ul.start = parseInt(line);
-      parent.append(ul);
-      continue;
-    }
-    const p = node("p");
-    inline(p, line, evidence);
-    parent.append(p);
+  } finally {
+    if (state.reviewActionId === id) $("#action-refresh").disabled = false;
   }
 }
+async function executeAction() {
+  const id = state.reviewActionId,
+    action = state.actions.get(id);
+  if (
+    state.reviewLoading ||
+    !action ||
+    !actionEligibility(action, {
+      mode: state.mode,
+      clientId: state.client,
+      busy: state.busy,
+      executing: state.executingActions.has(id),
+    }).allowed
+  )
+    return;
+  state.executingActions.add(id);
+  $("#action-error").textContent = "";
+  renderMode();
+  renderActionReview(action);
+  try {
+    const response = await api(
+      "/api/actions/" + encodeURIComponent(id) + "/execute",
+      {
+        method: "POST",
+        body: { confirmation: action.confirmation, client_id: state.client },
+      },
+    );
+    const current = response.action || response;
+    if (current.id !== id)
+      throw Error("Could not confirm this action’s result.");
+    registerActions([current], true);
+    toast(
+      current.result?.message ||
+        actionLabels[actionState(current)] ||
+        "Action status updated.",
+    );
+  } catch (error) {
+    registerActions([
+      {
+        ...action,
+        status: "unknown",
+        result: {
+          message:
+            "The outcome could not be confirmed. Refresh status before taking another step.",
+        },
+      },
+    ]);
+    $("#action-error").textContent = error.message;
+  } finally {
+    state.executingActions.delete(id);
+    renderMode();
+    refreshActionCards(id);
+    if (state.reviewActionId === id) renderActionReview(state.actions.get(id));
+  }
+}
+async function cancelAction(id) {
+  if (state.executingActions.has(id)) return;
+  state.executingActions.add(id);
+  renderMode();
+  refreshActionCards(id);
+  if (state.reviewActionId === id) renderActionReview(state.actions.get(id));
+  try {
+    const response = await api(
+      "/api/actions/" + encodeURIComponent(id) + "/cancel",
+      { method: "POST", body: {} },
+    );
+    const action = response.action || response;
+    if (action.id !== id)
+      throw Error("Could not confirm this proposal’s status.");
+    registerActions([action], true);
+    toast("Proposal status updated.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.executingActions.delete(id);
+    renderMode();
+    refreshActionCards(id);
+    if (state.reviewActionId === id) renderActionReview(state.actions.get(id));
+  }
+}
+
 function renderEvidence() {
   const list = $("#evidence-list");
   list.replaceChildren();
@@ -500,9 +1118,10 @@ function showEvidence(source) {
 function scrollBottom() {
   const el = $("#chat-scroll");
   el.scrollTop = el.scrollHeight;
+  updateScrollAffordance();
 }
 async function sendMessage(message) {
-  if (state.busy) return;
+  if (state.busy || state.modeChanging || state.executingActions.size) return;
   if (!state.connected) {
     openDialog("login");
     return;
@@ -511,17 +1130,94 @@ async function sendMessage(message) {
     openDialog("connections");
     return;
   }
+  if (state.mode === "write" && !state.client) {
+    toast("Select a client for Write mode, or switch to Read.");
+    $("#client-select").focus();
+    return;
+  }
+  const follow = nearBottom();
   $("#welcome").classList.add("hidden");
   addMessage("user", message);
-  const article = addMessage("assistant", "");
-  const body = $(".message-body", article);
+  const article = addMessage("assistant", ""),
+    body = $(".message-body", article);
   state.evidence = [];
   renderEvidence();
   setBusy(true);
   state.controller = new AbortController();
+  if (follow) scrollBottom();
+  else updateScrollAffordance();
+  $("#answer-announcement").textContent = "";
   $("#stream-status").textContent = "Reading your workspace";
   let answer = "",
-    completed = false;
+    completed = false,
+    evidence = [],
+    entities = [],
+    actions = [],
+    renderFrame = null;
+  function paintNow() {
+    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
+    renderFrame = null;
+    preserveReadingPosition(() =>
+      paintAnswer(article, answer, evidence, entities, !completed),
+    );
+  }
+  function schedulePaint() {
+    if (renderFrame === null) renderFrame = requestAnimationFrame(paintNow);
+  }
+  function receive(event) {
+    if (event.type === "conversation") state.conversation = event.id;
+    else if (event.type === "delta") {
+      answer += event.text || "";
+      schedulePaint();
+    } else if (event.type === "status")
+      $("#stream-status").textContent = event.text || "Reviewing the evidence";
+    else if (event.type === "tool")
+      $("#stream-status").textContent =
+        event.status === "error"
+          ? event.error || "A source could not be read"
+          : toolLabel(event.name);
+    else if (event.type === "evidence") {
+      evidence = [
+        ...evidence.filter((item) => item.id !== event.evidence.id),
+        event.evidence,
+      ];
+      state.evidence = evidence;
+      renderEvidence();
+      schedulePaint();
+    } else if (event.type === "entities") {
+      entities = [
+        ...entityMap([
+          ...entities,
+          ...(Array.isArray(event.entities) ? event.entities : []),
+        ]).values(),
+      ];
+      schedulePaint();
+    } else if (event.type === "action") {
+      const action = event.action;
+      if (!action?.id) return;
+      registerActions([action]);
+      actions = [...actions.filter((item) => item.id !== action.id), action];
+      preserveReadingPosition(() => renderArticleActions(article, actions));
+    } else if (event.type === "error")
+      throw Error(event.error || "The response could not finish.");
+    else if (event.type === "done") {
+      completed = true;
+      answer = event.content ?? answer;
+      $("#answer-announcement").textContent =
+        "Slide Chat finished its response.";
+      evidence = Array.isArray(event.evidence) ? event.evidence : evidence;
+      entities = Array.isArray(event.entities) ? event.entities : entities;
+      actions = Array.isArray(event.actions) ? event.actions : actions;
+      state.evidence = evidence;
+      renderEvidence();
+      registerActions(actions);
+      paintNow();
+      preserveReadingPosition(() => {
+        renderArticleActions(article, actions);
+        addAnswerFooter(article, answer, entities, event.usage);
+      });
+    }
+  }
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -538,86 +1234,110 @@ async function sendMessage(message) {
     });
     if (!response.ok) {
       const error = await response.json();
-      throw Error(error.error);
+      throw Error(error.error || "The message could not be sent.");
     }
+    if (!response.body)
+      throw Error("This browser could not open the response stream.");
     const reader = response.body.getReader(),
-      decoder = new TextDecoder();
-    let buffer = "";
+      decoder = new TextDecoder(),
+      feed = createEventDecoder(receive);
     while (true) {
       const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      let boundary;
-      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-        const block = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const raw = block
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trim())
-          .join("\n");
-        if (!raw) continue;
-        const event = JSON.parse(raw);
-        if (event.type === "conversation") state.conversation = event.id;
-        if (event.type === "delta") {
-          answer += event.text;
-          body.textContent = answer;
-          scrollBottom();
-        }
-        if (event.type === "status")
-          $("#stream-status").textContent = event.text;
-        if (event.type === "tool")
-          $("#stream-status").textContent =
-            event.status === "error"
-              ? event.error
-              : "Reading " + event.name.replaceAll("_", " ");
-        if (event.type === "evidence") {
-          state.evidence.push(event.evidence);
-          renderEvidence();
-        }
-        if (event.type === "error") throw Error(event.error);
-        if (event.type === "done") {
-          completed = true;
-          renderMarkdown(body, event.content, event.evidence);
-          const actions = node("div", "message-actions");
-          const copy = node("button", "text-button", "Copy answer");
-          copy.onclick = () =>
-            navigator.clipboard
-              .writeText(event.content)
-              .then(() => toast("Answer copied."));
-          const exp = node("a", "text-button", "Export with evidence");
-          exp.href = "/api/conversations/" + state.conversation + "/export";
-          actions.append(
-            copy,
-            exp,
-            node(
-              "span",
-              "text-button",
-              (
-                event.usage.input_tokens + event.usage.output_tokens
-              ).toLocaleString() + " tokens",
-            ),
-          );
-          article.append(actions);
-        }
-      }
+      feed(decoder.decode(value || new Uint8Array(), { stream: !done }), done);
       if (done) break;
     }
     if (!completed) throw Error("The response ended before completion.");
     await loadSession();
   } catch (error) {
-    const message =
+    paintNow();
+    const detail =
       error.name === "AbortError"
         ? "Stopped receiving this answer. In-flight API work may still finish."
         : error.message;
-    body.append(node("p", "form-error", message));
-    toast(message);
+    preserveReadingPosition(() => body.append(node("p", "form-error", detail)));
+    toast(detail);
     if (!completed) state.conversation = null;
   } finally {
+    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
     setBusy(false);
     state.controller = null;
-    scrollBottom();
+    updateScrollAffordance();
   }
 }
+
+$$("[data-mode]").forEach((button) =>
+  button.addEventListener("click", () => changeMode(button.dataset.mode)),
+);
+$("#latest-message").onclick = () => scrollBottom();
+$("#chat-scroll").addEventListener(
+  "scroll",
+  () => {
+    updateScrollAffordance();
+    if (activeEntity) positionEntity();
+  },
+  { passive: true },
+);
+window.addEventListener("resize", () => {
+  if (activeEntity) positionEntity();
+});
+document.addEventListener(
+  "scroll",
+  () => {
+    if (activeEntity) positionEntity();
+  },
+  true,
+);
+entityPanel.addEventListener("pointerenter", () =>
+  clearTimeout(entityHideTimer),
+);
+entityPanel.addEventListener("pointerleave", () => {
+  if (!activeEntity?.pinned)
+    entityHideTimer = setTimeout(() => hideEntity(), 180);
+});
+entityPanel.addEventListener("focusout", () =>
+  setTimeout(() => {
+    if (
+      activeEntity &&
+      !entityPanel.contains(document.activeElement) &&
+      document.activeElement !== activeEntity.anchor
+    )
+      hideEntity();
+  }, 0),
+);
+document.addEventListener("pointerdown", (event) => {
+  if (
+    activeEntity &&
+    !entityPanel.contains(event.target) &&
+    !activeEntity.anchor.contains(event.target)
+  )
+    hideEntity();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeEntity) {
+    event.preventDefault();
+    hideEntity({ restoreFocus: true });
+  }
+});
+$("#action-execute").onclick = executeAction;
+$("#action-cancel").onclick = () => cancelAction(state.reviewActionId);
+$("#action-refresh").onclick = () => openActionReview(state.reviewActionId);
+$("#action-dialog").addEventListener("close", () => {
+  state.reviewActionId = null;
+  state.reviewLoading = false;
+});
+setInterval(() => {
+  const action = state.actions.get(state.reviewActionId);
+  if (
+    $("#action-dialog").open &&
+    action &&
+    actionState(action) === "expired" &&
+    $("#action-review-status").textContent !== actionLabels.expired
+  ) {
+    renderActionReview(action);
+    refreshActionCards(action.id);
+  }
+}, 1000);
+
 $("#mobile-menu").onclick = () => {
   const open = $(".sidebar").classList.toggle("mobile-open");
   $("#mobile-menu").setAttribute("aria-expanded", String(open));
@@ -740,7 +1460,9 @@ $("#connector-form").onsubmit = async (e) => {
 };
 $("#client-select").onchange = async (e) => {
   state.client = e.target.value;
+  if (!state.client && state.mode === "write") await changeMode("read");
   newConversation();
+  renderMode();
   try {
     await loadContext();
   } catch (error) {
@@ -782,8 +1504,8 @@ $$("[data-prompt]").forEach(
 );
 $("#stop").onclick = () => state.controller?.abort();
 $("#disconnect").onclick = async () => {
-  if (state.busy) {
-    toast("Finish the current response before disconnecting.");
+  if (state.busy || state.executingActions.size) {
+    toast("Finish the current response or action before disconnecting.");
     return;
   }
   if (

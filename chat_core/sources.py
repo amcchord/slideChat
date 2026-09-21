@@ -89,6 +89,51 @@ def redact(value):
     return value
 
 
+def compact_alert_page(page):
+    """Keep operational evidence structured; embedded inventory is historical, not live."""
+    for row in page.get("data", []):
+        raw = row.pop("alert_fields", None)
+        if not raw:
+            continue
+        try:
+            fields = json.loads(raw) if isinstance(raw, str) else raw
+        except (ValueError, TypeError):
+            fields = raw
+        if isinstance(fields, dict):
+            details = {
+                k: v
+                for k, v in fields.items()
+                if k not in ("account", "agent", "device")
+            }
+            for kind in ("agent", "device"):
+                source = fields.get(kind)
+                if isinstance(source, dict):
+                    details[kind] = {
+                        k: v
+                        for k, v in source.items()
+                        if k
+                        in (
+                            "name",
+                            "hostname",
+                            "last_seen",
+                            "storage_used",
+                            "storage_total",
+                            "storage_health",
+                            "storage_available",
+                        )
+                    }
+            details = redact(details)
+        else:
+            details = redact(fields)
+        encoded = json.dumps(details, ensure_ascii=False)
+        row["details_at_alert_time"] = (
+            details
+            if len(encoded) <= 1500
+            else {"excerpt": encoded[:1500], "truncated": True}
+        )
+    return page
+
+
 class Slide:
     def __init__(self, key):
         self.headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}

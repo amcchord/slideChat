@@ -33,6 +33,8 @@ from chat_core.sources import (
     redact,
 )
 from chat_core.store import Store
+from chat_core.actions import Actions, CATALOG
+from chat_core.entities import plain_markdown
 from chat_core.recipes_handoff import install_handoff
 
 load_dotenv()
@@ -67,7 +69,9 @@ def create_app(test_config=None):
         current_id = session.get("workspace")
         current = store.get(current_id) if current_id else None
         if current:
-            accounts[hashlib.sha256(current["slide_key"].encode()).hexdigest()] = current_id
+            accounts[hashlib.sha256(current["slide_key"].encode()).hexdigest()] = (
+                current_id
+            )
         fingerprint = hashlib.sha256(key.encode()).hexdigest()
         wid = accounts.get(fingerprint)
         existing = store.get(wid) if wid else None
@@ -82,7 +86,10 @@ def create_app(test_config=None):
         return redirect("/")
 
     should_connect_recipes = install_handoff(
-        app, "chat", connect_from_recipes, "/",
+        app,
+        "chat",
+        connect_from_recipes,
+        "/",
         store.path.parent / "recipes-handoffs.sqlite3",
     )
 
@@ -100,12 +107,17 @@ def create_app(test_config=None):
 
     @app.before_request
     def protect():
-        if request.method in (
-            "POST",
-            "DELETE",
-            "PUT",
-            "PATCH",
-        ) and not request.path.startswith("/api/tools") and request.endpoint != "recipes_handoff.callback":
+        if (
+            request.method
+            in (
+                "POST",
+                "DELETE",
+                "PUT",
+                "PATCH",
+            )
+            and not request.path.startswith("/api/tools")
+            and request.endpoint != "recipes_handoff.callback"
+        ):
             if not secrets.compare_digest(
                 request.headers.get("X-CSRF-Token", ""), session.get("csrf", "missing")
             ):
@@ -160,6 +172,8 @@ def create_app(test_config=None):
             connected=True,
             csrf=session["csrf"],
             model=MODEL,
+            mode=state.get("mode", "read"),
+            supported_actions=CATALOG,
             openai_configured=bool(
                 state.get("openai_key") or hosted_key_available(state)
             ),
@@ -177,8 +191,17 @@ def create_app(test_config=None):
         if not key.startswith("tk_") or len(key) > 300 or "\n" in key or "\r" in key:
             raise SourceError("Enter a valid Slide API key.")
         Slide(key).get("device", {"limit": 1})
-        if session.get("workspace"):
-            store.delete(session["workspace"])
+        if session.get("workspace") and store.get(session["workspace"]):
+            old_wid = session["workspace"]
+            if not store.acquire(old_wid):
+                abort(
+                    409,
+                    "Wait for the current response or action to finish before replacing this workspace.",
+                )
+            try:
+                store.delete(old_wid)
+            finally:
+                store.release(old_wid)
         session.clear()
         session["workspace"] = store.create(key)
         session["csrf"] = secrets.token_urlsafe(32)
@@ -188,7 +211,15 @@ def create_app(test_config=None):
     @app.delete("/api/session")
     def disconnect():
         wid, _ = auth()
-        store.delete(wid)
+        if not store.acquire(wid):
+            abort(
+                409,
+                "Wait for the current response or action to finish before disconnecting.",
+            )
+        try:
+            store.delete(wid)
+        finally:
+            store.release(wid)
         session.clear()
         # Explicit disconnect should stay disconnected until the next Recipes visit.
         session["recipes_attempted"] = True
@@ -201,6 +232,71 @@ def create_app(test_config=None):
         result = toolbox.context()
         result["inventory"] = redact(toolbox.fleet())
         return jsonify(result)
+
+    def browser_auth():
+        if request.headers.get("Authorization"):
+            abort(
+                403, "Review and execute changes in the Slide Chat browser workspace."
+            )
+        return auth()
+
+    @app.post("/api/mode")
+    def set_mode():
+        wid, _ = browser_auth()
+        mode = (request.get_json() or {}).get("mode")
+        if mode not in ("read", "write"):
+            raise SourceError("Choose Read or Write mode.")
+        if not store.acquire(wid):
+            abort(
+                409,
+                "Wait for the current response or action to finish before changing modes.",
+            )
+        try:
+            store.update(wid, lambda state: state.update(mode=mode))
+        finally:
+            store.release(wid)
+        return jsonify(mode=mode)
+
+    @app.get("/api/actions/<action_id>")
+    def get_action(action_id):
+        wid, state = browser_auth()
+        actions = Actions(store, wid, state)
+        return jsonify(action=actions.public(actions.read(action_id)))
+
+    @app.post("/api/actions/<action_id>/cancel")
+    def cancel_action(action_id):
+        wid, state = browser_auth()
+        return jsonify(action=Actions(store, wid, state).cancel(action_id))
+
+    @app.post("/api/actions/<action_id>/execute")
+    def execute_action(action_id):
+        wid, _ = browser_auth()
+        body = request.get_json() or {}
+        if not store.acquire(wid):
+            abort(
+                409,
+                "Wait for the current response or action to finish before executing this change.",
+            )
+        try:
+            actions = Actions(store, wid, store.get(wid))
+            result = actions.execute(
+                action_id, body.get("confirmation"), body.get("client_id")
+            )
+        finally:
+            store.release(wid)
+        return jsonify(action=result)
+
+    def refresh_actions(wid, state, convo):
+        actions = Actions(store, wid, state)
+        for message in convo.get("messages", []):
+            for index, action in enumerate(message.get("actions", [])):
+                try:
+                    message["actions"][index] = actions.public(
+                        actions.read(action["id"])
+                    )
+                except SourceError:
+                    message["actions"][index] = {**action, "status": "unavailable"}
+        return convo
 
     @app.post("/api/openai")
     def openai_key():
@@ -241,30 +337,38 @@ def create_app(test_config=None):
 
     @app.get("/api/conversations/<conversation_id>")
     def conversation(conversation_id):
-        _, state = auth()
+        wid, state = auth()
         result = next(
             (c for c in state["conversations"] if c["id"] == conversation_id), None
         )
         if not result:
             abort(404, "Conversation not found.")
-        return jsonify(result)
+        return jsonify(refresh_actions(wid, state, result))
 
     @app.delete("/api/conversations/<conversation_id>")
     def delete_conversation(conversation_id):
         wid, _ = auth()
-        store.update(
-            wid,
-            lambda state: state.update(
-                conversations=[
-                    c for c in state["conversations"] if c["id"] != conversation_id
-                ]
-            ),
-        )
+        if not store.acquire(wid):
+            abort(
+                409,
+                "Wait for the current response or action to finish before deleting a conversation.",
+            )
+        try:
+            store.update(
+                wid,
+                lambda state: state.update(
+                    conversations=[
+                        c for c in state["conversations"] if c["id"] != conversation_id
+                    ]
+                ),
+            )
+        finally:
+            store.release(wid)
         return jsonify(ok=True)
 
     @app.get("/api/conversations/<conversation_id>/export")
     def export_conversation(conversation_id):
-        _, state = auth()
+        wid, state = auth()
         convo = next(
             (c for c in state["conversations"] if c["id"] == conversation_id), None
         )
@@ -275,8 +379,28 @@ def create_app(test_config=None):
             "",
             "Client: " + (convo["client_id"] or "All clients"),
         ]
+        refresh_actions(wid, state, convo)
         for m in convo["messages"]:
-            lines.extend(["", "## " + m["role"].title(), "", m["content"]])
+            lines.extend(
+                [
+                    "",
+                    "## " + m["role"].title(),
+                    "",
+                    plain_markdown(m["content"], m.get("entities", [])),
+                ]
+            )
+            for action in m.get("actions", []):
+                lines.extend(
+                    [
+                        "",
+                        action["label"]
+                        + " — "
+                        + action["target"]["label"]
+                        + ": "
+                        + action["status"],
+                        action.get("result", {}).get("message", action["summary"]),
+                    ]
+                )
             for source in m.get("evidence", []):
                 lines.extend(
                     [
@@ -303,38 +427,60 @@ def create_app(test_config=None):
             raise SourceError("Enter a question of up to 16,000 characters.")
         client_id = str(body.get("client_id", ""))
         conversation_id = body.get("conversation_id")
-        convo = next(
-            (c for c in state["conversations"] if c["id"] == conversation_id), None
-        )
-        if conversation_id and not convo:
-            abort(404, "Conversation not found.")
-        if convo and convo["client_id"] != client_id:
-            raise SourceError("Start a new conversation when changing clients.")
-        if not state.get("openai_key") and not hosted_key_available(state):
-            raise SourceError("Add your OpenAI key in Connections to start chatting.")
         if not store.acquire(wid):
-            abort(409, "A response is already running in this workspace.")
-        if not convo:
-            convo = {
-                "id": secrets.token_urlsafe(12),
-                "title": message.strip()[:70],
-                "client_id": client_id,
-                "updated": time.time(),
-                "messages": [],
-            }
-        # Per-key and deployment-wide budget guards apply even when a fresh browser workspace is created.
-        if not store.allow_request(state["slide_key"], bool(state.get("openai_key"))):
-            store.release(wid)
-            abort(
-                429,
-                "Daily request budget reached. Ask the operator to review the configured limit.",
+            abort(409, "A response or action is already running in this workspace.")
+        try:
+            # Mode, model credentials and history must be read under the lease.
+            # A second browser tab may have changed them after authentication.
+            state = store.get(wid)
+            if state is None:
+                abort(401, "Connect your Slide API key to continue.")
+            convo = next(
+                (c for c in state["conversations"] if c["id"] == conversation_id), None
             )
+            if conversation_id and not convo:
+                abort(404, "Conversation not found.")
+            if convo and convo["client_id"] != client_id:
+                raise SourceError("Start a new conversation when changing clients.")
+            if not state.get("openai_key") and not hosted_key_available(state):
+                raise SourceError(
+                    "Add your OpenAI key in Connections to start chatting."
+                )
+            if not convo:
+                convo = {
+                    "id": secrets.token_urlsafe(12),
+                    "title": message.strip()[:70],
+                    "client_id": client_id,
+                    "updated": time.time(),
+                    "messages": [],
+                }
+            # Budgets are per key and deployment, even when a fresh browser connects.
+            if not store.allow_request(
+                state["slide_key"], bool(state.get("openai_key"))
+            ):
+                abort(
+                    429,
+                    "Daily request budget reached. Ask the operator to review the configured limit.",
+                )
+        except Exception:
+            store.release(wid)
+            raise
 
         @stream_with_context
         def generate():
             try:
                 yield sse({"type": "conversation", "id": convo["id"]})
-                for event in run_chat(state, convo, message.strip(), client_id):
+                refresh_actions(wid, state, convo)
+                actions = Actions(store, wid, state)
+                for event in run_chat(
+                    state,
+                    convo,
+                    message.strip(),
+                    client_id,
+                    propose=lambda arguments: actions.propose(
+                        arguments, client_id, convo["id"]
+                    ),
+                ):
                     if event["type"] == "done":
                         convo["messages"].extend(
                             [
@@ -344,6 +490,8 @@ def create_app(test_config=None):
                                     "content": event["content"],
                                     "evidence": event["evidence"],
                                     "usage": event["usage"],
+                                    "entities": event.get("entities", []),
+                                    "actions": event.get("actions", []),
                                 },
                             ]
                         )
@@ -421,7 +569,7 @@ def create_app(test_config=None):
 
     @app.get("/health")
     def health():
-        return jsonify(status="ok", version="2.0.0", model=MODEL)
+        return jsonify(status="ok", version="2.1.0", model=MODEL)
 
     return app
 

@@ -7,7 +7,7 @@
     <title>Slide Chat · Your operations, connected</title>
     <link rel="icon" href="/static/slide-mark.svg" />
     <link rel="stylesheet" href="/static/css/workspace.css" />
-    <script src="/static/js/workspace.js" defer></script>
+    <script type="module" src="/static/js/workspace.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -102,48 +102,118 @@
             </p>
             <div class="capability-row">
               <span><i class="status-dot"></i> Live Slide context</span
-              ><span><span data-icon="shield"></span> Read-only tools</span
+              ><span><span data-icon="shield"></span> Explicit approvals</span
               ><span><span data-icon="link"></span> Cited evidence</span>
             </div>
             <div class="prompt-grid">
               <button
+                type="button"
                 class="prompt-card"
-                data-prompt="Review this client's backup protection. Identify the three most urgent risks, cite the evidence, and tell me exactly what to check first."
+                data-prompt="Prepare a concise operations brief for this client using current inventory, protection status, alerts, and connected records. Lead with the most urgent substantiated risks, then a short prioritized action list with exact systems and verification steps. Cite every finding, state observation times and coverage limits, and separate unknowns from confirmed facts. Do not invent fleet totals or history."
               >
-                <span class="prompt-icon blue" data-icon="shield"></span
-                ><strong>What needs attention?</strong
-                ><small>Find backup risks and prioritize the next step.</small
-                ><span class="prompt-arrow">↗</span></button
-              ><button
+                <span class="prompt-icon blue" data-icon="layers"></span
+                ><strong>Build my client brief</strong
+                ><small
+                  >Prioritize today’s risks and the next useful step.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
                 class="prompt-card"
-                data-prompt="Assess recovery readiness for this client. Inspect server details and recent recovery points. Separate confirmed facts from missing information."
+                data-prompt="Investigate backup failures for this client. Group findings by server, inspect the available backup history and alerts, identify retries and the latest known outcome, and rank unresolved issues. Provide evidence-backed likely causes and the exact next diagnostic step. State the period and limits actually checked; do not treat a recovered failure as an ongoing outage."
+              >
+                <span class="prompt-icon orange" data-icon="refresh"></span
+                ><strong>Investigate failed backups</strong
+                ><small>Trace failures, retries, and the latest outcome.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
+                class="prompt-card"
+                data-prompt="Assess recovery readiness for this client. Inspect server details, operating systems, installed services, recovery points, and available verification results. Build a concise table of confirmed server roles, recovery options, dependencies, and blocking unknowns, followed by prioritized tests. Do not infer a server role from its hostname or claim readiness without supporting evidence."
               >
                 <span class="prompt-icon purple" data-icon="runbook"></span
-                ><strong>Can we recover this client?</strong
-                ><small>Understand the servers, dependencies, and gaps.</small
-                ><span class="prompt-arrow">↗</span></button
-              ><button
+                ><strong>Check recovery readiness</strong
+                ><small>Understand the systems, dependencies, and gaps.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
                 class="prompt-card"
-                data-prompt="Reconcile the connected RMM inventory with this client's Slide agents. Identify unprotected systems and uncertain matches; cite the source records."
+                data-prompt="Find usable recovery points for this client&#x27;s protected servers. Compare the newest observed local and cloud recovery points, timestamps and age, available verification evidence, and any gaps. Recommend which point to investigate for each server and why. Cite the exact records and explain history or location coverage limits; do not imply a restore has been tested unless the evidence says so."
+              >
+                <span class="prompt-icon blue" data-icon="shield"></span
+                ><strong>Find the right recovery point</strong
+                ><small>Compare age, location, and verification evidence.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
+                class="prompt-card"
+                data-prompt="Reconcile the connected RMM inventory with this client&#x27;s Slide agents. Show confirmed matches, RMM systems with no evidenced Slide protection, and ambiguous matches separately, using stable identifiers where possible. Identify stale source data and the exact follow-up needed for each gap. If no RMM source is connected, say what is missing rather than claiming complete coverage."
+              >
+                <span class="prompt-icon teal" data-icon="link"></span
+                ><strong>Reconcile RMM coverage</strong
+                ><small>Find unprotected systems and uncertain matches.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
+                class="prompt-card"
+                data-prompt="Triage this client&#x27;s alerts using current alert status and related server and backup evidence. Prioritize active problems, identify duplicates or resolved history where supported, and give a concrete next step for each issue. Cite exact alerts and observation times. If a system change would help, explain it and prepare it for review only when Write mode is enabled; never imply it already ran."
+              >
+                <span class="prompt-icon orange" data-icon="search"></span
+                ><strong>Triage client alerts</strong
+                ><small>Separate active issues from resolved history.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
+                class="prompt-card"
+                data-prompt="Review capacity for this client&#x27;s devices and protected servers using available disk, storage, and retention evidence. Show observed used and free capacity with units, highlight substantiated constraints, and recommend specific checks. Estimate growth or time-to-full only when actual dated history supports the calculation. State missing measurements and avoid invented thresholds or totals."
               >
                 <span class="prompt-icon teal" data-icon="layers"></span
-                ><strong>Connect the dots</strong
-                ><small>Compare RMM inventory with protected systems.</small
-                ><span class="prompt-arrow">↗</span></button
-              ><button
+                ><strong>Review capacity pressure</strong
+                ><small>Spot constrained devices without guessing runway.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                type="button"
                 class="prompt-card"
-                data-prompt="Review this client's connected billing records. Explain outstanding invoices, currencies, billing periods, and any changes you can substantiate."
+                data-prompt="Review this client&#x27;s connected billing records. Separate paid, open, overdue, and void invoices; show billing periods, due dates, currencies, and supported line-item explanations. Explain changes only when comparable records substantiate them, and never combine currencies. Cite source records and flag mapping or coverage gaps. If billing is not connected, say so; do not infer invoices from Slide inventory."
               >
-                <span class="prompt-icon orange" data-icon="receipt"></span
-                ><strong>Make sense of billing</strong
-                ><small>Explain invoices using your connected records.</small
-                ><span class="prompt-arrow">↗</span>
+                <span class="prompt-icon purple" data-icon="receipt"></span
+                ><strong>Explain client billing</strong
+                ><small
+                  >Reconcile invoices, dates, currencies, and status.</small
+                ><span class="prompt-arrow" aria-hidden="true">↗</span>
               </button>
             </div>
           </section>
-          <div id="messages" class="messages" aria-live="polite"></div>
+          <div id="messages" class="messages" aria-live="off"></div>
+          <div id="answer-announcement" class="sr-only" role="status"></div>
         </div>
         <div class="composer-wrap">
+          <button
+            type="button"
+            id="latest-message"
+            class="button small latest-message hidden"
+          >
+            Latest response ↓
+          </button>
+          <div class="mode-controls">
+            <div class="mode-switch" role="group" aria-label="Chat permissions">
+              <button type="button" data-mode="read" aria-pressed="true">
+                Read
+              </button>
+              <button type="button" data-mode="write" aria-pressed="false">
+                Write
+              </button>
+            </div>
+            <p id="mode-description">
+              Investigate freely. Tools only read your connected sources.
+            </p>
+          </div>
           <div
             id="stream-status"
             class="stream-status hidden"
@@ -188,6 +258,7 @@
           <span class="pill">LIVE</span>
         </div>
         <p class="muted context-intro">The evidence behind the answer.</p>
+        <div id="context-mode" class="context-mode">Read · No changes</div>
         <div class="context-source">
           <div class="source-logo">
             <img src="/static/slide-mark.svg" alt="" />
@@ -218,15 +289,19 @@
         </div>
         <div class="context-footer">
           <span data-icon="lock"></span>
-          <p>
-            Credentials stay encrypted on the server. Chat tools only read data.
+          <p id="tool-safety-label">
+            Credentials stay encrypted. Read mode cannot change client systems.
           </p>
         </div>
       </aside>
     </div>
     <dialog id="login-dialog">
       <form id="login-form">
-        {% if config.RECIPES_HANDOFF_KEY %}<a class="button" href="/connect/recipes">Continue with Recipes →</a>{% endif %}
+        {% if config.RECIPES_HANDOFF_KEY %}<a
+          class="button"
+          href="/connect/recipes"
+          >Continue with Recipes →</a
+        >{% endif %}
         <div class="dialog-icon">
           <img src="/static/slide-mark.svg" alt="" />
         </div>
@@ -395,6 +470,62 @@ python3 slide-chat/scripts/slide_chat.py --mcp</pre>
       </div>
       <p id="evidence-time" class="muted"></p>
       <pre id="evidence-data"></pre>
+    </dialog>
+    <div
+      id="entity-popover"
+      class="entity-popover hidden"
+      popover="manual"
+      role="dialog"
+      aria-label="Entity details"
+      tabindex="-1"
+    ></div>
+    <dialog
+      id="action-dialog"
+      class="wide-dialog action-dialog"
+      aria-labelledby="action-title"
+    >
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">REVIEW A SYSTEM CHANGE</span>
+          <h2 id="action-title">Review proposed change</h2>
+        </div>
+        <button
+          type="button"
+          class="icon-button close-dialog"
+          aria-label="Close action review"
+        >
+          ×
+        </button>
+      </div>
+      <span id="action-review-status" class="action-status"
+        >Review required</span
+      >
+      <div class="action-review-target">
+        <span class="eyebrow">EXACT TARGET</span
+        ><strong id="action-target-label"></strong
+        ><code id="action-target-id"></code
+        ><span id="action-client-label" class="muted"></span>
+      </div>
+      <p id="action-summary"></p>
+      <div id="action-comparison" class="action-comparison"></div>
+      <div id="action-result" class="action-result hidden" role="status"></div>
+      <p id="action-expiry" class="field-hint"></p>
+      <p id="action-review-note" class="action-review-note"></p>
+      <p id="action-error" class="form-error" role="alert"></p>
+      <div class="action-review-controls">
+        <button type="button" id="action-refresh" class="text-button">
+          Refresh status</button
+        ><button type="button" id="action-cancel" class="button">
+          Cancel proposal</button
+        ><button
+          type="button"
+          id="action-execute"
+          class="button primary"
+          disabled
+        >
+          Execute action
+        </button>
+      </div>
     </dialog>
     <div id="toast" class="toast hidden" role="status"></div>
   </body>

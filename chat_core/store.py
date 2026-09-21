@@ -40,6 +40,12 @@ class Store:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS tokens (digest TEXT PRIMARY KEY, workspace TEXT NOT NULL, expires REAL NOT NULL)"
             )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS actions (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, payload BLOB NOT NULL)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS actions_workspace ON actions(workspace)"
+            )
         os.chmod(self.path, 0o600)
 
     @contextmanager
@@ -58,6 +64,7 @@ class Store:
             "connectors": [],
             "conversations": [],
             "created": time.time(),
+            "mode": "read",
         }
         with self.connection() as db:
             db.execute(
@@ -102,6 +109,7 @@ class Store:
 
     def delete(self, wid):
         with self.connection() as db:
+            db.execute("DELETE FROM actions WHERE workspace=?", (wid,))
             db.execute("DELETE FROM tokens WHERE workspace=?", (wid,))
             db.execute("DELETE FROM workspaces WHERE id=?", (wid,))
 
