@@ -6,8 +6,8 @@
     <meta name="csrf-token" content="{{ csrf }}" />
     <title>Slide Chat</title>
     <link rel="icon" href="/static/slide-mark.svg" />
-    <link rel="stylesheet" href="/static/css/workspace.css" />
-    <script type="module" src="/static/js/workspace.js"></script>
+    <link rel="stylesheet" href="/static/css/workspace.css?v=20260922" />
+    <script type="module" src="/static/js/workspace.js?v=20260922"></script>
   </head>
   <body>
     <header class="topbar">
@@ -79,13 +79,25 @@
           <div>
             <span class="eyebrow">CLIENT CONTEXT</span
             ><select id="client-select" aria-label="Client context" disabled>
-              <option value="">All accessible clients</option>
+              <option value="">All clients</option>
             </select>
           </div>
-          <button id="refresh-context" class="text-button">
-            <span data-icon="refresh"></span> Refresh context
-          </button>
+          <div class="scope-actions">
+            <button id="open-evidence" class="button small" data-open="sources">
+              Evidence <span id="mobile-evidence-count">0</span>
+            </button>
+            <button
+              id="refresh-context"
+              class="text-button"
+              aria-label="Refresh client context"
+              title="Refresh client context"
+            >
+              <span data-icon="refresh"></span
+              ><span class="refresh-label">Refresh</span>
+            </button>
+          </div>
         </div>
+        <p id="context-status" class="context-status hidden" role="status"></p>
         <div class="chat-scroll" id="chat-scroll">
           <section
             class="welcome compact-home"
@@ -223,26 +235,64 @@
                 Write
               </button>
             </div>
-            <p id="mode-description">
-              Read only.
-            </p>
+            <p id="mode-description">Read only.</p>
           </div>
-          <div
+          <section
             id="stream-status"
             class="stream-status hidden"
-            role="status"
-          ></div>
+            aria-label="Response activity"
+          >
+            <div class="progress-heading">
+              <span
+                id="progress-icon"
+                class="progress-icon"
+                aria-hidden="true"
+              ></span>
+              <strong
+                id="progress-title"
+                role="status"
+                aria-atomic="true"
+              ></strong>
+              <span
+                id="progress-time"
+                class="progress-time"
+                aria-label="Elapsed time"
+              ></span>
+            </div>
+            <p id="progress-detail"></p>
+            <div class="progress-actions">
+              <button
+                type="button"
+                id="progress-evidence"
+                class="text-button"
+                data-open="sources"
+              >
+                0 sources collected
+              </button>
+              <details id="progress-activity">
+                <summary>Activity</summary>
+                <ol id="progress-log"></ol>
+              </details>
+              <button
+                type="button"
+                id="progress-edit"
+                class="text-button hidden"
+              >
+                Edit and resend
+              </button>
+            </div>
+          </section>
           <form id="chat-form" class="composer">
             <textarea
               id="message"
               rows="2"
               maxlength="16000"
-              placeholder="Ask about this client…"
+              placeholder="Ask about your clients…"
               aria-label="Message Slide Chat"
             ></textarea>
             <div class="composer-bottom">
               <button type="button" class="text-button" data-open="connections">
-                <span data-icon="plus"></span> Add context</button
+                <span data-icon="plus"></span> Add source</button
               ><span class="composer-scope" id="composer-scope"
                 >Connect your workspace</span
               ><button
@@ -257,7 +307,6 @@
               </button>
             </div>
           </form>
-
         </div>
       </main>
       <aside class="context-panel">
@@ -300,6 +349,26 @@
         </div>
       </aside>
     </div>
+    <dialog
+      id="sources-dialog"
+      class="wide-dialog"
+      aria-labelledby="sources-title"
+    >
+      <div class="dialog-head">
+        <h2 id="sources-title">Evidence collected</h2>
+        <button
+          class="icon-button close-dialog"
+          aria-label="Close evidence list"
+        >
+          ×
+        </button>
+      </div>
+      <p class="muted">
+        Sources read for this response. Open a source to inspect its records and
+        observation time.
+      </p>
+      <div id="sources-list"></div>
+    </dialog>
     <dialog id="login-dialog">
       <form id="login-form">
         {% if config.RECIPES_HANDOFF_KEY %}<a
@@ -451,7 +520,8 @@ SLIDE_CHAT_URL=https://chat.slide.recipes
 SLIDE_CHAT_TOKEN=&lt;your private token&gt;
 SLIDE_CLIENT_ID=&lt;optional client ID&gt;
 
-python3 slide-chat/scripts/slide_chat.py --mcp</pre>
+python3 slide-chat/scripts/slide_chat.py --mcp</pre
+          >
           <p>
             Keep credentials in your environment or secret manager. The download
             contains no account data or credentials.

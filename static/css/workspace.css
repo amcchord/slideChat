@@ -2042,13 +2042,559 @@ body.dark .compact-home .orange {
 }
 
 /* Clarification replies submit a message; operational changes still use review. */
-.reply-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 8px; }
-.reply-button { border-color: var(--primary); min-height: 40px; white-space: normal; text-align: left; }
-.reply-button:disabled { opacity: .5; cursor: default; }
-.client-picker { width: min(440px, calc(100vw - 28px)); }
-.client-picker h2 { margin: 0; }
-.client-filter { width: 100%; margin: 6px 0 14px; }
-.client-options { display: grid; gap: 8px; max-height: 45dvh; overflow: auto; }
-.client-options .button { min-height: 44px; justify-content: flex-start; white-space: normal; text-align: left; }
+.reply-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+.reply-button {
+  border-color: var(--primary);
+  min-height: 40px;
+  white-space: normal;
+  text-align: left;
+}
+.reply-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.client-picker {
+  width: min(440px, calc(100vw - 28px));
+}
+.client-picker h2 {
+  margin: 0;
+}
+.client-filter {
+  width: 100%;
+  margin: 6px 0 14px;
+}
+.client-options {
+  display: grid;
+  gap: 8px;
+  max-height: 45dvh;
+  overflow: auto;
+}
+.client-options .button {
+  min-height: 44px;
+  justify-content: flex-start;
+  white-space: normal;
+  text-align: left;
+}
 
-.messages:empty { display: none; }
+.messages:empty {
+  display: none;
+}
+
+/* Usability: legible type, reachable evidence, and persistent task feedback. */
+:root {
+  --muted: #586477;
+  --success: #137957;
+  --danger: #b72c3c;
+}
+body.dark {
+  --muted: #b1bdcf;
+  --success: #62d5aa;
+  --danger: #ff9da8;
+}
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.button,
+.nav,
+.history-title {
+  font-size: 14px;
+  min-height: 44px;
+}
+.button.small {
+  font-size: 13px;
+}
+.icon-button,
+.send-button {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+.text-button {
+  font-size: 13px;
+  min-height: 40px;
+}
+.sidebar-label,
+.eyebrow {
+  font-size: 11px;
+}
+.history-delete {
+  min-width: 28px;
+}
+.sidebar-footer strong,
+.sidebar-footer small {
+  font-size: 12px;
+}
+.scope-bar {
+  gap: 12px;
+  padding: 10px 30px;
+}
+.scope-bar > div:first-child {
+  min-width: 0;
+}
+.scope-bar select {
+  font-size: 15px;
+  min-height: 40px;
+  margin-top: 0;
+  max-width: 100%;
+  width: 230px;
+}
+.scope-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+#open-evidence {
+  display: none;
+}
+.context-status {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 10px 30px;
+  font-size: 13px;
+  color: var(--primary);
+  background: var(--soft);
+  border-bottom: 1px solid var(--border);
+}
+.context-status.error {
+  color: var(--danger);
+}
+.refreshing svg {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.welcome.compact-home {
+  width: 100%;
+  padding-top: 18px;
+}
+.compact-home h1 {
+  font-size: 22px;
+  line-height: 28px;
+  margin-bottom: 12px;
+}
+.compact-home .prompt-grid {
+  gap: 10px;
+}
+.compact-home .prompt-card {
+  min-height: 66px;
+  padding: 10px 12px 10px 54px;
+}
+.compact-home .prompt-card strong {
+  font-size: 14px;
+  line-height: 21px;
+}
+.compact-home .prompt-card small {
+  font-size: 12px;
+  line-height: 18px;
+}
+.compact-home .prompt-icon {
+  width: 28px;
+  height: 28px;
+  top: 18px;
+}
+.composer {
+  padding: 10px 14px;
+}
+.composer textarea {
+  font-size: 16px;
+  line-height: 1.5;
+  min-height: 48px;
+}
+.composer textarea::placeholder {
+  color: var(--muted);
+}
+.composer-scope {
+  font-size: 12px;
+}
+.mode-controls {
+  gap: 10px;
+}
+.mode-switch button {
+  font-size: 13px;
+  min-height: 36px;
+  padding: 5px 12px;
+}
+.mode-controls p {
+  font-size: 12px;
+}
+.message {
+  font-size: 16px;
+  line-height: 1.7;
+}
+.message-label {
+  font-size: 13px;
+}
+.message-body h2 {
+  font-size: 21px;
+}
+.message-body h3 {
+  font-size: 18px;
+}
+.message-body code,
+.message-body pre {
+  font-size: 13px;
+}
+.message-body .table-scroll table {
+  font-size: 14px;
+  width: max-content;
+  min-width: 100%;
+}
+.message-body .table-scroll th,
+.message-body .table-scroll td {
+  min-width: 160px;
+  max-width: 300px;
+  overflow-wrap: break-word;
+}
+.message-body .table-scroll th {
+  font-size: 12px;
+}
+.citation {
+  font-size: 12px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px 6px;
+}
+.entity-chip {
+  font-size: 13px;
+  min-height: 32px;
+  padding: 3px 7px;
+}
+.entity-kind {
+  font-size: 10px;
+}
+.entity-label {
+  max-width: 210px;
+}
+.entity-popover-heading .icon-button {
+  width: 40px;
+  height: 40px;
+}
+.entity-fields dt,
+.entity-fields dd,
+.entity-popover-footer small {
+  font-size: 12px;
+}
+.message-actions {
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.panel-heading h2 {
+  font-size: 16px;
+}
+.context-panel h3,
+.context-source strong,
+.setting-heading strong {
+  font-size: 14px;
+}
+.context-source small,
+.context-mode,
+.context-panel h3 span,
+.fleet-stats span,
+.context-footer p,
+.evidence-card small,
+.field-hint,
+.connection-row small {
+  font-size: 12px;
+}
+.context-panel {
+  padding: 25px 18px;
+}
+.evidence-card strong {
+  font-size: 13px;
+}
+.evidence-card {
+  min-height: 64px;
+}
+.add-source {
+  min-height: 44px;
+  font-size: 12px;
+}
+.form-error {
+  font-size: 14px;
+  color: var(--danger);
+}
+dialog input,
+dialog select {
+  font-size: 16px;
+  min-height: 44px;
+}
+#evidence-data {
+  font-size: 13px;
+}
+.stream-status {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px 4px;
+  margin: 0 0 10px;
+  color: var(--text);
+  box-shadow: 0 3px 12px #14243a06;
+}
+.stream-status:before {
+  display: none;
+}
+.progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+}
+#progress-title {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.progress-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--primary);
+}
+[data-phase="running"] .progress-icon {
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-right-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+.progress-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#progress-detail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 5px 0 0 25px;
+}
+.progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 16px;
+  margin-left: 25px;
+}
+.progress-actions .text-button,
+.progress-actions summary {
+  color: var(--primary);
+  font-size: 12px;
+  min-height: 36px;
+}
+.progress-actions summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-actions summary::before {
+  content: "▸";
+}
+.progress-actions details[open] summary::before {
+  content: "▾";
+}
+#progress-log {
+  position: absolute;
+  z-index: 6;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin: 0 0 8px;
+  list-style: none;
+  padding: 12px 16px;
+  max-height: min(240px, 35dvh);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+#progress-log:empty::before {
+  content: "Waiting for the first update…";
+  color: var(--muted);
+}
+#progress-log li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+#progress-log li:last-child {
+  border: 0;
+}
+#progress-log time {
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 12px;
+}
+[data-phase="done"] .progress-icon,
+[data-phase="done"] #progress-title {
+  color: var(--success);
+}
+[data-phase="done"] #progress-detail {
+  display: none;
+}
+[data-phase="error"] #progress-title,
+[data-phase="stopped"] #progress-title {
+  color: var(--danger);
+}
+#stop {
+  margin-left: auto;
+  min-height: 44px;
+}
+.latest-message {
+  top: -48px;
+}
+@media (max-width: 1150px) {
+  #open-evidence {
+    display: inline-flex;
+  }
+  .scope-actions {
+    gap: 8px;
+  }
+}
+@media (max-width: 720px) {
+  .topbar {
+    padding: 0 12px;
+    gap: 6px;
+  }
+  .mobile-menu {
+    width: 44px;
+  }
+  .brand {
+    font-size: 21px;
+    flex-shrink: 0;
+  }
+  .brand-product {
+    font-size: 18px;
+  }
+  .top-actions {
+    gap: 2px;
+  }
+  .top-actions .button {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .scope-bar {
+    height: 80px;
+    padding: 8px 14px;
+    gap: 8px;
+  }
+  .scope-bar select {
+    width: 170px;
+    font-size: 15px;
+  }
+  .scope-bar .text-button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .refresh-label {
+    display: none;
+  }
+  .context-status {
+    padding: 8px 14px;
+  }
+  .welcome.compact-home {
+    padding: 16px 14px;
+  }
+  .compact-home h1 {
+    font-size: 20px;
+    margin-bottom: 12px;
+  }
+  .compact-home .prompt-card {
+    min-height: 88px;
+    padding: 12px 9px 12px 40px;
+  }
+  .compact-home .prompt-card strong {
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .compact-home .prompt-card small {
+    font-size: 12px;
+    line-height: 17px;
+  }
+  .compact-home .prompt-icon {
+    width: 22px;
+    height: 22px;
+    left: 9px;
+    top: 14px;
+  }
+  .composer-wrap {
+    padding: 8px 12px max(10px, env(safe-area-inset-bottom));
+  }
+  .mode-controls {
+    margin-bottom: 7px;
+  }
+  .mode-controls p {
+    font-size: 11px;
+  }
+  .mode-switch button {
+    min-height: 38px;
+  }
+  .messages {
+    padding: 20px 14px;
+  }
+  .message.user {
+    margin-left: 16px;
+  }
+  .message {
+    font-size: 16px;
+  }
+  .citation {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  .message-body .table-scroll th,
+  .message-body .table-scroll td {
+    min-width: 170px;
+    max-width: 260px;
+  }
+  .stream-status {
+    padding: 10px 11px 2px;
+    margin-bottom: 8px;
+  }
+  #progress-detail {
+    margin-left: 0;
+  }
+  .progress-actions {
+    margin-left: 0;
+    gap: 2px 14px;
+  }
+  .progress-actions .text-button,
+  .progress-actions summary {
+    min-height: 40px;
+  }
+  #progress-title {
+    font-size: 14px;
+  }
+  dialog {
+    padding: 20px;
+    max-height: calc(100dvh - 32px);
+  }
+}
+@media (max-width: 370px) {
+  .brand-product {
+    display: none;
+  }
+  .scope-bar select {
+    width: 130px;
+  }
+  .mode-controls {
+    gap: 7px;
+  }
+}

@@ -302,7 +302,7 @@ test("workspace template exposes eight workflows, review controls, and module en
     "utf8",
   );
   assert.equal((html.match(/data-prompt=/g) || []).length, 8);
-  assert.match(html, /<script type="module" src="\/static\/js\/workspace.js"/);
+  assert.match(html, /<script type="module" src="\/static\/js\/workspace.js(?:\?[^\"]+)?"/);
   for (const id of [
     "entity-popover",
     "mode-description",

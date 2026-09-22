@@ -5,10 +5,15 @@ import {
   entityMap,
   actionState,
   actionEligibility,
-  toolLabel,
   clientQuestionChoices,
   replyRequest,
 } from "./rendering.mjs";
+import {
+  createProgress,
+  advanceProgress,
+  elapsedTime,
+  progressDetail,
+} from "./progress.mjs";
 ("use strict");
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -28,7 +33,56 @@ const state = {
   executingActions: new Set(),
   reviewActionId: null,
   reviewLoading: false,
+  progress: null,
+  contextRequest: 0,
 };
+let progressTimer = null;
+let lastProgressLog = null;
+function renderProgress() {
+  const progress = state.progress;
+  if (!progress) return;
+  const root = $("#stream-status");
+  root.classList.remove("hidden");
+  root.dataset.phase = progress.phase;
+  const title = $("#progress-title");
+  const titleText =
+    progress.phase === "running" && Date.now() - progress.updated >= 30000
+      ? "Waiting for an update"
+      : progress.title;
+  if (title.textContent !== titleText) title.textContent = titleText;
+  $("#progress-time").textContent = elapsedTime(
+    (progress.ended ?? Date.now()) - progress.started,
+  );
+  $("#progress-detail").textContent = progressDetail(progress);
+  $("#progress-icon").textContent =
+    progress.phase === "done" ? "✓" : progress.phase === "running" ? "" : "!";
+  $("#progress-evidence").textContent =
+    `${progress.sources.length} ${progress.sources.length === 1 ? "source" : "sources"} collected`;
+  if (lastProgressLog !== progress.log) {
+    $("#progress-log").replaceChildren(
+      ...progress.log.map((entry) => {
+        const row = node("li");
+        row.append(
+          node("span", "", entry.text),
+          node("time", "", entry.elapsed),
+        );
+        return row;
+      }),
+    );
+    lastProgressLog = progress.log;
+  }
+  $("#progress-edit").classList.toggle(
+    "hidden",
+    !["error", "stopped"].includes(progress.phase),
+  );
+}
+function resetProgress() {
+  clearInterval(progressTimer);
+  state.progress = null;
+  $("#stream-status").classList.add("hidden");
+  $("#progress-activity").open = false;
+  document.title = "Slide Chat";
+}
 const paths = {
   chat: "M4 4h16v12H9l-5 4V4Z",
   runbook:
@@ -89,19 +143,28 @@ function setBusy(busy) {
   state.busy = busy;
   $("#send").classList.toggle("hidden", busy);
   $("#stop").classList.toggle("hidden", !busy);
-  $("#client-select").disabled = busy || state.choosingReply || !state.connected;
+  $("#client-select").disabled =
+    busy || state.choosingReply || !state.connected;
   $("#new-chat").disabled = busy;
-  $("#stream-status").classList.toggle("hidden", !busy);
+  $("#messages").setAttribute("aria-busy", String(busy));
+  if (busy) hideEntity();
   renderMode();
   syncReplyButtons();
+  renderEvidence();
 }
 function closeNavigation() {
   $(".sidebar").classList.remove("mobile-open");
   $("#mobile-menu").setAttribute("aria-expanded", "false");
 }
 function newConversation(fromChoice = false) {
-  if (state.busy || (state.choosingReply && fromChoice !== true) || state.executingActions.size) return;
+  if (
+    state.busy ||
+    (state.choosingReply && fromChoice !== true) ||
+    state.executingActions.size
+  )
+    return;
   closeNavigation();
+  resetProgress();
   state.conversation = null;
   state.evidence = [];
   hideEntity();
@@ -132,32 +195,53 @@ async function loadSession() {
       : "Add an OpenAI key in Connections";
     renderHistory();
     renderConnections();
+    renderEvidence();
   }
   renderMode();
   return data;
 }
 async function loadContext() {
   if (!state.connected) return;
+  const request = ++state.contextRequest;
+  const status = $("#context-status");
+  status.textContent = "Loading client context…";
+  status.classList.remove("hidden", "error");
+  $("#refresh-context").disabled = true;
+  $("#refresh-context").classList.add("refreshing");
+  $("#slide-dot").classList.add("inactive");
   $("#slide-status").textContent = "Refreshing…";
   ["clients", "devices", "agents"].forEach((name) => {
     $("#stat-" + name).textContent = "—";
   });
   $("#context-sources").replaceChildren();
   const requestedClient = state.client;
-  const data = await api(
-    "/api/context?client_id=" + encodeURIComponent(requestedClient),
-  ).catch((error) => {
-    if (requestedClient !== state.client) return null;
+  let data;
+  try {
+    data = await api(
+      "/api/context?client_id=" + encodeURIComponent(requestedClient),
+    );
+  } catch (error) {
+    if (requestedClient !== state.client || request !== state.contextRequest)
+      return;
     $("#slide-status").textContent = "Context unavailable";
+    status.textContent =
+      "Client context could not load. Use Refresh to try again.";
+    status.classList.add("error");
     throw error;
-  });
-  if (!data) return;
+  } finally {
+    if (request === state.contextRequest) {
+      $("#refresh-context").disabled = false;
+      $("#refresh-context").classList.remove("refreshing");
+    }
+  }
   // The initial inventory can arrive after the user reopens a client conversation.
   // Keep its selector options, but never replace that client's context with stale counts.
   if (!requestedClient) {
     state.inventory = data.inventory;
     renderClientOptions();
   }
+  if (request !== state.contextRequest) return;
+  status.classList.add("hidden");
   if (requestedClient !== state.client) return;
   state.context = data;
   $("#stat-clients").textContent = data.counts.clients;
@@ -198,7 +282,7 @@ async function loadContext() {
 function renderClientOptions() {
   const selected = state.client;
   const options = [
-    ["", "All accessible clients"],
+    ["", "All clients"],
     ...(state.inventory?.clients || []).map((c) => [
       c.client_id,
       c.name || c.client_id,
@@ -239,7 +323,8 @@ function renderHistory() {
     const remove = node("button", "history-delete", "×");
     remove.setAttribute("aria-label", "Delete " + c.title);
     remove.onclick = async () => {
-      if (state.busy || state.choosingReply || state.executingActions.size) return;
+      if (state.busy || state.choosingReply || state.executingActions.size)
+        return;
       try {
         await api("/api/conversations/" + c.id, { method: "DELETE" });
         if (state.conversation === c.id) newConversation();
@@ -252,13 +337,7 @@ function renderHistory() {
     history.append(row);
   });
   if (!history.children.length)
-    history.append(
-      node(
-        "p",
-        "muted empty-history",
-        "No conversations yet.",
-      ),
-    );
+    history.append(node("p", "muted empty-history", "No conversations yet."));
 }
 async function loadConversation(id) {
   if (state.busy || state.choosingReply || state.executingActions.size) return;
@@ -266,6 +345,7 @@ async function loadConversation(id) {
   renderMode();
   syncReplyButtons();
   hideEntity();
+  resetProgress();
   try {
     const data = await api("/api/conversations/" + id);
     closeNavigation();
@@ -283,7 +363,9 @@ async function loadConversation(id) {
         m.usage,
         m.entities || [],
         m.actions || [],
-        m.choices?.length ? m.choices : clientQuestionChoices(m.content, m.entities),
+        m.choices?.length
+          ? m.choices
+          : clientQuestionChoices(m.content, m.entities),
         m.reply_context || data.messages[index - 1]?.content || "",
       );
       state.evidence = m.evidence || state.evidence;
@@ -314,7 +396,8 @@ function renderConnections() {
     );
     const remove = node("button", "text-button", "Remove");
     remove.onclick = async () => {
-      if (state.busy || state.choosingReply || state.executingActions.size) return;
+      if (state.busy || state.choosingReply || state.executingActions.size)
+        return;
       try {
         await api("/api/connectors/" + c.id, { method: "DELETE" });
         await loadSession();
@@ -394,9 +477,28 @@ function renderMode() {
   state.mode = state.mode === "write" ? "write" : "read";
   const write = state.mode === "write";
   $("#client-select").disabled =
-    state.busy || state.choosingReply || state.executingActions.size > 0 || !state.connected;
-  $("#new-chat").disabled = state.busy || state.choosingReply || state.executingActions.size > 0;
-  $("#send").disabled = state.modeChanging || state.choosingReply || state.executingActions.size > 0;
+    state.busy ||
+    state.choosingReply ||
+    state.executingActions.size > 0 ||
+    !state.connected;
+  $("#new-chat").disabled =
+    state.busy || state.choosingReply || state.executingActions.size > 0;
+  $("#send").disabled =
+    state.modeChanging ||
+    state.choosingReply ||
+    state.executingActions.size > 0;
+  $$("[data-prompt], .history-title, .history-delete").forEach((button) => {
+    button.disabled =
+      state.busy ||
+      state.choosingReply ||
+      state.modeChanging ||
+      state.executingActions.size > 0;
+  });
+  $("#message").placeholder = state.busy
+    ? "Draft a follow-up while the answer finishes…"
+    : state.client
+      ? "Ask about this client…"
+      : "Ask about your clients…";
   document.body.classList.toggle("write-mode", write);
   $$("[data-mode]").forEach((button) => {
     button.setAttribute(
@@ -411,8 +513,10 @@ function renderMode() {
       !state.connected;
   });
   $("#mode-description").textContent = write
-    ? (state.client ? "Review each change before it runs." : "Select a client to prepare changes.")
-    : "Read only.";
+    ? state.client
+      ? "Review each change before it runs."
+      : "Select a client to prepare changes."
+    : "Read only · No system changes";
   $("#context-mode").textContent = write
     ? "Write · Review required"
     : "Read · No changes";
@@ -518,10 +622,12 @@ function entityTone(entity) {
   return "neutral";
 }
 let activeEntity = null,
-  entityHideTimer;
+  entityHideTimer,
+  entityShowTimer;
 const entityPanel = $("#entity-popover");
 function hideEntity({ restoreFocus = false } = {}) {
   clearTimeout(entityHideTimer);
+  clearTimeout(entityShowTimer);
   if (!activeEntity) return;
   const anchor = activeEntity.anchor;
   anchor?.setAttribute("aria-expanded", "false");
@@ -654,9 +760,15 @@ function createEntityChip(entity) {
     button.append(dot);
   }
   button.addEventListener("pointerenter", (event) => {
-    if (event.pointerType !== "touch") showEntity(entity, button);
+    if (event.pointerType !== "touch" && !state.busy) {
+      clearTimeout(entityShowTimer);
+      entityShowTimer = setTimeout(() => {
+        if (button.isConnected && !state.busy) showEntity(entity, button);
+      }, 400);
+    }
   });
   button.addEventListener("pointerleave", () => {
+    clearTimeout(entityShowTimer);
     if (!activeEntity?.pinned)
       entityHideTimer = setTimeout(() => hideEntity(), 180);
   });
@@ -774,23 +886,43 @@ function addMessage(
 function syncReplyButtons() {
   const latest = $$(".message.assistant").at(-1);
   $$(".reply-button").forEach((button) => {
-    button.disabled = state.busy || state.choosingReply || state.modeChanging || state.executingActions.size > 0 ||
+    button.disabled =
+      state.busy ||
+      state.choosingReply ||
+      state.modeChanging ||
+      state.executingActions.size > 0 ||
       button.closest(".message") !== latest;
   });
 }
 async function answerChoice(choice, original) {
-  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
+  if (
+    state.busy ||
+    state.choosingReply ||
+    state.modeChanging ||
+    state.executingActions.size
+  )
+    return;
   state.choosingReply = true;
   renderMode();
   syncReplyButtons();
   try {
     // Use the complete workspace inventory, not a previous client's filtered view.
-    if (choice.client_id) {
+    if (
+      choice.client_id &&
+      !state.inventory?.clients?.some(
+        (client) => client.client_id === choice.client_id,
+      )
+    ) {
       const context = await api("/api/context");
       state.inventory = context.inventory;
       renderClientOptions();
     }
-    const request = replyRequest(choice, original, state.client, state.inventory?.clients || []);
+    const request = replyRequest(
+      choice,
+      original,
+      state.client,
+      state.inventory?.clients || [],
+    );
     if (request.restart) {
       newConversation(true);
       state.client = request.client;
@@ -830,21 +962,33 @@ clientPicker.id = "client-picker";
 clientPicker.setAttribute("aria-labelledby", "client-picker-title");
 document.body.append(clientPicker);
 async function startPrompt(button) {
-  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
+  if (
+    state.busy ||
+    state.choosingReply ||
+    state.modeChanging ||
+    state.executingActions.size
+  )
+    return;
   if (!state.connected) return openDialog("login");
   const prompt = button.dataset.prompt;
-  if (state.client || button.dataset.clientRequired !== "true") return sendMessage(prompt);
+  if (state.client || button.dataset.clientRequired !== "true")
+    return sendMessage(prompt);
   state.choosingReply = true;
   renderMode();
   try {
-    await loadContext();
+    if (!state.inventory?.clients?.length) await loadContext();
     const clients = state.inventory?.clients || [];
     if (clients.length === 1) {
       state.choosingReply = false;
-      return await answerChoice({ client_id: clients[0].client_id, label: clients[0].name }, prompt);
+      return await answerChoice(
+        { client_id: clients[0].client_id, label: clients[0].name },
+        prompt,
+      );
     }
     clientPicker.replaceChildren();
-    const head = node("div", "dialog-head"), title = node("h2", "", "Choose a client"), close = node("button", "icon-button", "×");
+    const head = node("div", "dialog-head"),
+      title = node("h2", "", "Choose a client"),
+      close = node("button", "icon-button", "×");
     title.id = "client-picker-title";
     close.type = "button";
     close.setAttribute("aria-label", "Close client picker");
@@ -857,23 +1001,45 @@ async function startPrompt(button) {
     const options = node("div", "client-options");
     function paintClients() {
       options.replaceChildren();
-      clients.filter((client) => (client.name || client.client_id).toLowerCase().includes(filter.value.toLowerCase())).forEach((client) => {
-        const pick = node("button", "button", client.name || client.client_id);
-        pick.type = "button";
-        pick.onclick = () => {
-          clientPicker.close();
-          answerChoice({ label: client.name || client.client_id, client_id: client.client_id }, prompt);
-        };
-        options.append(pick);
-      });
-      if (!options.children.length) options.append(node("p", "muted", "No matching clients."));
+      clients
+        .filter((client) =>
+          (client.name || client.client_id)
+            .toLowerCase()
+            .includes(filter.value.toLowerCase()),
+        )
+        .forEach((client) => {
+          const pick = node(
+            "button",
+            "button",
+            client.name || client.client_id,
+          );
+          pick.type = "button";
+          pick.onclick = () => {
+            clientPicker.close();
+            answerChoice(
+              {
+                label: client.name || client.client_id,
+                client_id: client.client_id,
+              },
+              prompt,
+            );
+          };
+          options.append(pick);
+        });
+      if (!options.children.length)
+        options.append(node("p", "muted", "No matching clients."));
     }
     filter.oninput = paintClients;
     paintClients();
     clientPicker.append(head, filter, options);
     clientPicker.showModal();
-  } catch (error) { toast(error.message); }
-  finally { state.choosingReply = false; renderMode(); syncReplyButtons(); }
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.choosingReply = false;
+    renderMode();
+    syncReplyButtons();
+  }
 }
 function addAnswerFooter(article, content, entities, usage) {
   $(".message-actions", article)?.remove();
@@ -1214,28 +1380,41 @@ async function cancelAction(id) {
 }
 
 function renderEvidence() {
-  const list = $("#evidence-list");
-  list.replaceChildren();
   $("#evidence-count").textContent = state.evidence.length;
-  if (!state.evidence.length) {
-    list.append(
-      node(
-        "p",
-        "muted evidence-empty",
-        "No sources read yet.",
-      ),
-    );
-    return;
+  $("#mobile-evidence-count").textContent = state.evidence.length;
+  for (const list of [$("#evidence-list"), $("#sources-list")]) {
+    const focusedSource = list.contains(document.activeElement)
+      ? document.activeElement.dataset.sourceId
+      : null;
+    list.replaceChildren();
+    if (!state.evidence.length) {
+      list.append(
+        node(
+          "p",
+          "muted evidence-empty",
+          state.busy
+            ? "Waiting for the first source. Evidence will appear as it is read."
+            : "Run a workflow or ask a question to collect evidence.",
+        ),
+      );
+      continue;
+    }
+    state.evidence.forEach((source) => {
+      const card = node("button", "evidence-card");
+      card.dataset.sourceId = source.id;
+      card.append(
+        node("strong", "", source.id + " · " + source.label),
+        node("small", "", new Date(source.observed_at).toLocaleTimeString()),
+      );
+      card.onclick = () => showEvidence(source);
+      list.append(card);
+    });
+    if (focusedSource) {
+      $$(".evidence-card", list)
+        .find((card) => card.dataset.sourceId === focusedSource)
+        ?.focus({ preventScroll: true });
+    }
   }
-  state.evidence.forEach((source) => {
-    const card = node("button", "evidence-card");
-    card.append(
-      node("strong", "", source.id + " · " + source.label),
-      node("small", "", new Date(source.observed_at).toLocaleTimeString()),
-    );
-    card.onclick = () => showEvidence(source);
-    list.append(card);
-  });
 }
 function showEvidence(source) {
   $("#evidence-title").textContent = source.id + " · " + source.label;
@@ -1250,7 +1429,13 @@ function scrollBottom() {
   updateScrollAffordance();
 }
 async function sendMessage(message, fromChoice = false) {
-  if (state.busy || (state.choosingReply && fromChoice !== true) || state.modeChanging || state.executingActions.size) return;
+  if (
+    state.busy ||
+    (state.choosingReply && fromChoice !== true) ||
+    state.modeChanging ||
+    state.executingActions.size
+  )
+    return;
   if (!state.connected) {
     openDialog("login");
     return;
@@ -1270,13 +1455,21 @@ async function sendMessage(message, fromChoice = false) {
   const article = addMessage("assistant", ""),
     body = $(".message-body", article);
   state.evidence = [];
-  renderEvidence();
   setBusy(true);
   state.controller = new AbortController();
   if (follow) scrollBottom();
   else updateScrollAffordance();
   $("#answer-announcement").textContent = "";
-  $("#stream-status").textContent = "Reading your workspace";
+  state.progress = createProgress();
+  $("#progress-activity").open = false;
+  $("#progress-edit").onclick = () => {
+    if (!$("#message").value.trim()) $("#message").value = message;
+    $("#message").focus();
+  };
+  renderProgress();
+  clearInterval(progressTimer);
+  progressTimer = setInterval(renderProgress, 1000);
+  document.title = "Working · Slide Chat";
   let answer = "",
     completed = false,
     evidence = [],
@@ -1294,18 +1487,13 @@ async function sendMessage(message, fromChoice = false) {
     if (renderFrame === null) renderFrame = requestAnimationFrame(paintNow);
   }
   function receive(event) {
+    state.progress = advanceProgress(state.progress, event);
+    renderProgress();
     if (event.type === "conversation") state.conversation = event.id;
     else if (event.type === "delta") {
       answer += event.text || "";
       schedulePaint();
-    } else if (event.type === "status")
-      $("#stream-status").textContent = event.text || "Reviewing the evidence";
-    else if (event.type === "tool")
-      $("#stream-status").textContent =
-        event.status === "error"
-          ? event.error || "A source could not be read"
-          : toolLabel(event.name);
-    else if (event.type === "evidence") {
+    } else if (event.type === "evidence") {
       evidence = [
         ...evidence.filter((item) => item.id !== event.evidence.id),
         event.evidence,
@@ -1334,6 +1522,7 @@ async function sendMessage(message, fromChoice = false) {
       answer = event.content ?? answer;
       $("#answer-announcement").textContent =
         "Slide Chat finished its response.";
+      document.title = "Answer ready · Slide Chat";
       evidence = Array.isArray(event.evidence) ? event.evidence : evidence;
       entities = Array.isArray(event.entities) ? event.entities : entities;
       actions = Array.isArray(event.actions) ? event.actions : actions;
@@ -1343,7 +1532,11 @@ async function sendMessage(message, fromChoice = false) {
       paintNow();
       preserveReadingPosition(() => {
         renderArticleActions(article, actions);
-        renderReplies(article, event.choices || clientQuestionChoices(answer, entities), event.reply_context || message);
+        renderReplies(
+          article,
+          event.choices || clientQuestionChoices(answer, entities),
+          event.reply_context || message,
+        );
         addAnswerFooter(article, answer, entities, event.usage);
       });
     }
@@ -1384,10 +1577,22 @@ async function sendMessage(message, fromChoice = false) {
       error.name === "AbortError"
         ? "Stopped receiving this answer. In-flight API work may still finish."
         : error.message;
-    preserveReadingPosition(() => body.append(node("p", "form-error", detail)));
-    toast(detail);
+    if (!completed) {
+      state.progress = advanceProgress(state.progress, {
+        type: error.name === "AbortError" ? "stopped" : "error",
+        error: detail,
+      });
+      renderProgress();
+      document.title = "Response interrupted · Slide Chat";
+    }
+    if (!completed)
+      preserveReadingPosition(() =>
+        body.append(node("p", "form-error", detail)),
+      );
+    else toast("Answer complete. The conversation list could not refresh.");
     if (!completed) state.conversation = null;
   } finally {
+    clearInterval(progressTimer);
     if (renderFrame !== null) cancelAnimationFrame(renderFrame);
     setBusy(false);
     state.controller = null;
@@ -1612,7 +1817,13 @@ $("#new-chat").onclick = newConversation;
 $("#chat-nav").onclick = newConversation;
 $("#chat-form").onsubmit = (e) => {
   e.preventDefault();
-  if (state.busy || state.choosingReply || state.modeChanging || state.executingActions.size) return;
+  if (
+    state.busy ||
+    state.choosingReply ||
+    state.modeChanging ||
+    state.executingActions.size
+  )
+    return;
   const message = $("#message").value.trim();
   if (message) {
     $("#message").value = "";

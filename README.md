@@ -44,7 +44,7 @@ Responses use `model=gpt-6-astra`, reasoning `medium`, `store=false`, streamed o
 ```sh
 python -m unittest discover -s tests -v
 node --check static/js/workspace.js
-node --test tests/frontend.test.mjs
+node --test tests/*.test.mjs
 ```
 
 See [operations and response contract](docs/operations.md), [deployment](DEPLOYMENT.md) and [validation](docs/rebuild-validation.md) for rollout details and verified limits.
