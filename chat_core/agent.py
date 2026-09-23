@@ -80,19 +80,19 @@ TOOLS = [
             "source_id": {"type": "string"},
             "category": {
                 "type": "string",
-                "enum": ["inventory", "invoices", "subscriptions"],
+                "enum": ["inventory", "alerts", "invoices", "subscriptions"],
             },
         },
     ),
     tool(
         "connected_device",
-        "Read detailed NinjaOne hardware, software, volumes, or Windows services for a device verified against the mapped client organization.",
+        "Read client-scoped RMM device details. NinjaOne supports detail, software, volumes and services. Speck RMM supports detail, volumes, services and existing patch reports (patches), scoped by its integration token to the mapped site. Neither adapter triggers scans.",
         {
             "source_id": {"type": "string"},
             "device_id": {"type": "string"},
             "category": {
                 "type": "string",
-                "enum": ["detail", "software", "volumes", "services"],
+                "enum": ["detail", "software", "volumes", "services", "patches"],
             },
         },
     ),
@@ -148,7 +148,7 @@ Response contract:
 - An agent is a protected server/workload, a device is a Slide appliance, a backup is one backup attempt/job, a snapshot is a recovery point created by a backup, and an alert reports a condition. Backup success, cloud replication and boot/service verification are separate facts; never conflate them. A snapshot is not proof of a successful full application recovery.
 - Use consistent table patterns as appropriate: fleet/triage 'Agent | Finding | Evidence | Next step'; backup attempts 'Backup | Agent | Started (UTC) | Status | Next step'; recovery points 'Snapshot | Taken (UTC) | Locations | Verification | Limitation'; alerts 'Alert | Affected system | Status | Next step'; capacity 'Device | Used / total | Free | Next step'; billing 'Item | Period | Amount | Payment status | Explanation'. Omit irrelevant columns; never add placeholder rows to make a table. Keep cells short and put qualifications below the table.
 - Use UTC for timestamps unless the user asks for a known time zone, label the time zone, and compare timestamps with the context's observed_at to spot stale evidence. 'Not reported', 'Not connected' and 'Not checked' have different meanings. Do not compute averages, coverage percentages, totals or recovery objectives without complete relevant inputs. Prioritize a bounded sample when the fleet is large, state exactly what was checked, and offer a concrete next investigation.
-- For write requests, report the proposed effect and point to the review card. Do not repeat the full action card as a prose checklist. Billing/RMM questions with no connected source should say what is missing and which supported connection/import would answer the question, without inventing data. Connections currently supports NinjaOne RMM, Stripe billing, and client-scoped CSV/JSON imports for other providers. Do not imply other native provider connections exist.
+- For write requests, report the proposed effect and point to the review card. Do not repeat the full action card as a prose checklist. Billing/RMM questions with no connected source should say what is missing and which supported connection/import would answer the question, without inventing data. Connections currently supports NinjaOne RMM, Speck RMM (site-scoped inventory, health, volumes, services, open alerts and existing patch reports), Stripe billing, and client-scoped CSV/JSON imports for other providers. Do not imply other native provider connections exist.
 """
 
 

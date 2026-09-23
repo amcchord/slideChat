@@ -263,7 +263,7 @@ async function loadContext() {
       node(
         "span",
         "source-letter",
-        c.kind === "stripe" ? "$" : c.kind === "ninjaone" ? "N" : "{}",
+        c.kind === "stripe" ? "$" : c.kind === "ninjaone" ? "N" : c.kind === "speckrmm" ? "S" : "{}",
       ),
     );
     const label = node("div");
@@ -448,6 +448,15 @@ function connectorFields() {
       "OAuth client secret",
       "password",
       "Create a machine-to-machine application with Monitoring scope and Client credentials grant. Read inventory, hardware, software, volumes, and services for this organization.",
+    );
+  } else if (kind === "speckrmm") {
+    field(
+      "site", "Speck site", "text",
+      "Enter the exact site name for this Slide client. The integration token is limited to this site; Chat never guesses a client mapping.",
+    );
+    field(
+      "api_key", "Speck read-only integration token", "password",
+      "In speckrmm.com → Settings → Slide Chat, create an integration token for this site. Reads inventory, health, volumes, services, open alerts and existing patch reports. No commands or remote access.",
     );
   } else if (kind === "stripe") {
     field(
@@ -1769,6 +1778,8 @@ $("#connector-form").onsubmit = async (e) => {
         organization_id: values.organization_id,
         region: values.region,
       };
+    else if (values.kind === "speckrmm")
+      body.config = { site: values.site, api_key: values.api_key };
     else if (values.kind === "stripe")
       body.config = {
         customer_id: values.customer_id,

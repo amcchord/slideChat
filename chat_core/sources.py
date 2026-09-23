@@ -82,7 +82,7 @@ def redact(value):
         return [redact(v) for v in value]
     if isinstance(value, str):
         return re.sub(
-            r"\b(?:tk_|sk-|sk_live_|rk_live_|sc_)[A-Za-z0-9_-]{16,}",
+            r"\b(?:tk_|sk-|sk_live_|rk_live_|speck_ro_|sc_)[A-Za-z0-9_-]{16,}",
             "[credential removed]",
             value,
         )[:10000]
@@ -257,7 +257,57 @@ def ninja_devices(base, headers, organization):
     raise SourceError("NinjaOne inventory pagination limit reached.")
 
 
+SPECK_ORIGIN = "https://speckrmm.com"
+
+
+def speck_read(config, path, params=None):
+    result = request_json(
+        SPECK_ORIGIN + "/api/integrations/v1/" + path,
+        headers={"Authorization": "Bearer " + config["api_key"], "Accept": "application/json"},
+        params=params,
+    )
+    if not isinstance(result, dict) or result.get("site") != config["site"]:
+        raise SourceError("Speck returned a different site. Use a token for the exact mapped Speck site.")
+    return result
+
+
+def speck_collection(config, category):
+    endpoint = "devices" if category == "inventory" else "alerts"
+    rows, after = [], ""
+    for _ in range(51):
+        page = speck_read(config, endpoint, {"limit": 100, "after": after})
+        batch = page.get(endpoint)
+        if not isinstance(batch, list) or any(not isinstance(row, dict) for row in batch):
+            raise SourceError("Unexpected Speck collection shape.")
+        if endpoint == "devices" and any(row.get("site") != config["site"] for row in batch):
+            raise SourceError("Speck returned a device outside the mapped site.")
+        rows.extend(batch)
+        if len(rows) > 5000:
+            raise SourceError("Speck inventory exceeds 5,000 records. Narrow the integration site.")
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return {endpoint: rows, "site": config["site"], "scope": "inventory:read",
+                    "note": "Live Speck API using latest reported telemetry. Check last_seen/collected_at/scanned for freshness. No endpoint scans are triggered.",
+                    **({"state": "active"} if endpoint == "alerts" else {})}
+        if not isinstance(cursor, str) or not re.fullmatch(r"[a-f0-9]{32}", cursor) or cursor <= after or not batch:
+            raise SourceError("Speck pagination did not advance.")
+        after = cursor
+    raise SourceError("Speck pagination limit reached.")
+
+
 def connected_device(connector, device_id, category):
+    if connector["kind"] == "speckrmm":
+        if not re.fullmatch(r"[a-f0-9]{32}", device_id):
+            raise SourceError("Choose a Speck device ID from the connected inventory.")
+        if category not in ("detail", "volumes", "services", "patches"):
+            raise SourceError("Speck supports detail, volumes, services and existing patch reports; installed software inventory is unavailable.")
+        result = speck_read(connector["config"], "devices/" + device_id, {"category": category})
+        device = result.get("device", {})
+        if category == "detail" and (not isinstance(device, dict) or device.get("id") != device_id or device.get("site") != connector["config"]["site"]):
+            raise SourceError("Speck returned a device outside the mapped site.")
+        if category != "detail" and result.get("device_id") != device_id:
+            raise SourceError("Speck returned a different device.")
+        return result
     if connector["kind"] != "ninjaone" or not device_id.isdigit():
         raise SourceError("Choose a NinjaOne device ID from the connected inventory.")
     config = connector["config"]
@@ -278,6 +328,10 @@ def connected_device(connector, device_id, category):
 
 def connector_data(connector, category="inventory"):
     config = connector["config"]
+    if connector["kind"] == "speckrmm":
+        if category not in ("inventory", "alerts"):
+            raise SourceError("Choose inventory or alerts for Speck.")
+        return speck_collection(config, category)
     if connector["kind"] == "import":
         return {
             "records": connector["records"],
@@ -338,7 +392,7 @@ def connector_data(connector, category="inventory"):
 
 def validate_connector(body, inventory):
     kind = body.get("kind")
-    if kind not in ("ninjaone", "stripe", "import"):
+    if kind not in ("ninjaone", "speckrmm", "stripe", "import"):
         raise SourceError("Choose a supported source.")
     client_id = str(body.get("client_id", ""))
     scoped_inventory(inventory, client_id)
@@ -353,6 +407,7 @@ def validate_connector(body, inventory):
     clean = {}
     required = {
         "ninjaone": ["client_id", "client_secret", "organization_id", "region"],
+        "speckrmm": ["api_key", "site"],
         "stripe": ["api_key", "customer_id"],
         "import": [],
     }[kind]
@@ -365,6 +420,12 @@ def validate_connector(body, inventory):
         clean["region"] not in NINJA_HOSTS or not clean["organization_id"].isdigit()
     ):
         raise SourceError("Choose a NinjaOne region and numeric organization ID.")
+    if kind == "speckrmm" and (
+        not re.fullmatch(r"speck_ro_[A-Za-z0-9_-]{43}", clean["api_key"])
+        or len(clean["site"]) > 80
+        or any(ord(c) < 32 for c in clean["site"])
+    ):
+        raise SourceError("Provide a Speck read-only integration token and its exact site name.")
     if kind == "stripe" and (
         not re.fullmatch(r"cus_[A-Za-z0-9]+", clean["customer_id"])
         or not clean["api_key"].startswith(("rk_", "sk_"))
