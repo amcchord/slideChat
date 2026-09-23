@@ -2637,3 +2637,23 @@ dialog select {
     gap: 7px;
   }
 }
+
+/* SVG documents remain images, never active page content. */
+.svg-card { margin: 1rem 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; min-width: 0; background: var(--surface); }
+.svg-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; padding: .8rem 1rem; border-bottom: 1px solid var(--border); }
+.svg-heading strong { font-size: .85rem; overflow-wrap: anywhere; }
+.svg-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.svg-actions a { text-decoration: none; }
+.svg-actions output { min-width: 3em; text-align: center; font-size: .8rem; }
+.svg-image { display: block; width: 100%; height: auto; background: #f8fafc; }
+.svg-pending, .svg-error { padding: 1rem; }
+.svg-card details { padding: .75rem; }
+.svg-dialog { width: min(96vw, 1800px); max-width: 96vw; max-height: 94dvh; padding: 0; }
+.svg-viewport { overflow: auto; max-height: calc(90dvh - 85px); background: #e2e8f0; }
+.svg-viewport .svg-image { max-width: none; }
+.svg-zoom-1 .svg-image { width: 100%; }
+.svg-zoom-2 .svg-image { width: 200%; }
+.svg-zoom-3 .svg-image { width: 300%; }
+.svg-zoom-4 .svg-image { width: 400%; }
+.svg-zoom-0 .svg-image { width: 100%; max-height: calc(90dvh - 85px); object-fit: contain; }
+@media (max-width: 600px) { .svg-heading { padding: .7rem; } .svg-actions { gap: .5rem; } }

@@ -312,6 +312,11 @@ function renderClientOptions() {
         return o;
       }),
   );
+  if ($("#connector-form [name=kind]").value === "speckrmm") {
+    const all = node("option", "", "All clients (all-sites token only)");
+    all.value = "";
+    sourceSelect.append(all);
+  }
   if (selected) sourceSelect.value = selected;
 }
 function renderHistory() {
@@ -397,7 +402,7 @@ function renderConnections() {
     const label = node("div");
     label.append(
       node("strong", "", c.name),
-      node("small", "", c.kind + " · " + c.client_id),
+      node("small", "", c.kind + " · " + (c.client_id || "All clients")),
     );
     const remove = node("button", "text-button", "Remove");
     remove.onclick = async () => {
@@ -419,6 +424,14 @@ function renderConnections() {
 function connectorFields() {
   const kind = $("#connector-form [name=kind]").value;
   const root = $("#connector-fields");
+  const sourceSelect = $("#connector-form [name=client_id]");
+  sourceSelect.querySelector('option[value=""]')?.remove();
+  sourceSelect.required = kind !== "speckrmm";
+  if (kind === "speckrmm") {
+    const all = node("option", "", "All clients (all-sites token only)");
+    all.value = "";
+    sourceSelect.append(all);
+  }
   root.replaceChildren();
   const field = (name, label, type = "text", hint = "") => {
     const l = node("label", "", label);
@@ -457,11 +470,11 @@ function connectorFields() {
   } else if (kind === "speckrmm") {
     field(
       "site", "Speck site", "text",
-      "Enter the exact site name for this Slide client. The integration token is limited to this site; Chat never guesses a client mapping.",
+      "Enter the exact site for one client, or * with All clients for a full network overview. Account-wide data is unavailable in single-client conversations.",
     );
     field(
       "api_key", "Speck read-only integration token", "password",
-      "In speckrmm.com → Settings → Slide Chat, create an integration token for this site. Reads inventory, health, volumes, services, open alerts and existing patch reports. No commands or remote access.",
+      "In speckrmm.com → Settings → Slide Chat, create an integration token for this site. For diagrams, also grant the relevant Proxmox connections when creating the token. Reads hosts, guests, inventory and health; no commands or remote access.",
     );
   } else if (kind === "stripe") {
     field(

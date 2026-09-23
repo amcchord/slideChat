@@ -13,7 +13,7 @@ class SourceError(Exception):
     pass
 
 
-def request_json(url, *, headers=None, params=None, data=None, auth=None):
+def request_json(url, *, headers=None, params=None, data=None, auth=None, read_timeout=30):
     # URLs are assembled only by fixed adapters below; redirects never carry credentials.
     for attempt in range(3 if data is None else 1):
         try:
@@ -24,7 +24,7 @@ def request_json(url, *, headers=None, params=None, data=None, auth=None):
                 params=params,
                 data=data,
                 auth=auth,
-                timeout=(5, 30),
+                timeout=(5, read_timeout),
                 allow_redirects=False,
             )
         except requests.RequestException:
@@ -265,6 +265,7 @@ def speck_read(config, path, params=None):
         SPECK_ORIGIN + "/api/integrations/v1/" + path,
         headers={"Authorization": "Bearer " + config["api_key"], "Accept": "application/json"},
         params=params,
+        read_timeout=60 if path == "topology" else 30,
     )
     if not isinstance(result, dict) or result.get("site") != config["site"]:
         raise SourceError("Speck returned a different site. Use a token for the exact mapped Speck site.")
@@ -279,7 +280,7 @@ def speck_collection(config, category):
         batch = page.get(endpoint)
         if not isinstance(batch, list) or any(not isinstance(row, dict) for row in batch):
             raise SourceError("Unexpected Speck collection shape.")
-        if endpoint == "devices" and any(row.get("site") != config["site"] for row in batch):
+        if endpoint == "devices" and config["site"] != "*" and any(row.get("site") != config["site"] for row in batch):
             raise SourceError("Speck returned a device outside the mapped site.")
         rows.extend(batch)
         if len(rows) > 5000:
@@ -303,7 +304,7 @@ def connected_device(connector, device_id, category):
             raise SourceError("Speck supports detail, volumes, services and existing patch reports; installed software inventory is unavailable.")
         result = speck_read(connector["config"], "devices/" + device_id, {"category": category})
         device = result.get("device", {})
-        if category == "detail" and (not isinstance(device, dict) or device.get("id") != device_id or device.get("site") != connector["config"]["site"]):
+        if category == "detail" and (not isinstance(device, dict) or device.get("id") != device_id or (connector["config"]["site"] != "*" and device.get("site") != connector["config"]["site"])):
             raise SourceError("Speck returned a device outside the mapped site.")
         if category != "detail" and result.get("device_id") != device_id:
             raise SourceError("Speck returned a different device.")
@@ -329,8 +330,26 @@ def connected_device(connector, device_id, category):
 def connector_data(connector, category="inventory"):
     config = connector["config"]
     if connector["kind"] == "speckrmm":
+        if category == "topology":
+            result = speck_read(config, "topology")
+            groups = result.get("connections")
+            if not isinstance(groups, list) or len(groups) > 10:
+                raise SourceError("Unexpected Speck topology shape.")
+            for group in groups:
+                if (not isinstance(group, dict) or not isinstance(group.get("id"), str)
+                    or not isinstance(group.get("name"), str) or not isinstance(group.get("resources"), list)
+                    or len(group["resources"]) > 5000):
+                    raise SourceError("Unexpected Speck topology connection.")
+                for row in group["resources"]:
+                    if (not isinstance(row, dict) or row.get("kind") not in ("node", "qemu", "lxc")
+                        or not all(isinstance(row.get(k), str) for k in ("id", "name", "node"))
+                        or not isinstance(row.get("identity", {}), dict)
+                        or not isinstance(row.get("endpoint", {}), dict)
+                        or not isinstance(row.get("identity", {}).get("macs", []), list)):
+                        raise SourceError("Unexpected Speck topology resource.")
+            return result
         if category not in ("inventory", "alerts"):
-            raise SourceError("Choose inventory or alerts for Speck.")
+            raise SourceError("Choose inventory, topology or alerts for Speck.")
         return speck_collection(config, category)
     if connector["kind"] == "import":
         return {
@@ -396,7 +415,7 @@ def validate_connector(body, inventory):
         raise SourceError("Choose a supported source.")
     client_id = str(body.get("client_id", ""))
     scoped_inventory(inventory, client_id)
-    if not client_id:
+    if not client_id and kind != "speckrmm":
         raise SourceError("Bind this source to a Slide client.")
     name = str(body.get("name", "")).strip()[:80]
     if not name:
@@ -426,6 +445,8 @@ def validate_connector(body, inventory):
         or any(ord(c) < 32 for c in clean["site"])
     ):
         raise SourceError("Provide a Speck read-only integration token and its exact site name.")
+    if kind == "speckrmm" and ((not client_id) != (clean["site"] == "*")):
+        raise SourceError("All-sites Speck tokens (*) must use All clients. Bind a named site to one Slide client.")
     if kind == "stripe" and (
         not re.fullmatch(r"cus_[A-Za-z0-9]+", clean["customer_id"])
         or not clean["api_key"].startswith(("rk_", "sk_"))

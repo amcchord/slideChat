@@ -1,4 +1,5 @@
-/** Safe streaming Markdown. All content becomes DOM text; HTML is never interpreted. */
+/** Safe streaming Markdown with isolated, sanitized SVG image previews. */
+import { createSVGPreview } from "./svg.mjs";
 const ENTITY_PATTERN =
   /\[\[(agent|device|client|backup|snapshot|alert):([A-Za-z0-9_-]+)\]\]/g;
 export const ENTITY_TYPES = new Set([
@@ -163,6 +164,7 @@ export function actionEligibility(
 }
 
 export const TOOL_LABELS = {
+  network_diagram: "Mapping hosts, guests, clients and Slide protection",
   ask_question: "Preparing answer choices",
   slide_inventory: "Reading the client inventory",
   slide_agent: "Inspecting server details and services",
@@ -264,6 +266,7 @@ export function createMarkdownRenderer({
   document,
   onEvidence = () => {},
   createEntityChip,
+  createDiagram = createSVGPreview,
 }) {
   const node = (tag, text, className) => {
     const element = document.createElement(tag);
@@ -362,6 +365,13 @@ export function createMarkdownRenderer({
             break;
           }
           block.push(lines[index]);
+        }
+        if (fence[2].toLowerCase() === "svg") {
+          fragment.append(createDiagram(document, block.join("\n"), {
+            pending: streaming && !closed,
+            incomplete: !closed,
+          }));
+          continue;
         }
         const pre = node("pre", undefined, "code-block");
         if (fence[2]) pre.setAttribute("aria-label", `${fence[2]} code`);
