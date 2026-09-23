@@ -1399,7 +1399,7 @@ function renderEvidence() {
       );
       continue;
     }
-    state.evidence.forEach((source) => {
+    [...state.evidence].reverse().forEach((source) => {
       const card = node("button", "evidence-card");
       card.dataset.sourceId = source.id;
       card.append(
