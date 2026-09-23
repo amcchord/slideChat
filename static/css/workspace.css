@@ -1586,12 +1586,15 @@ input[type="file"] {
   border-color: var(--primary);
   background: var(--soft);
 }
-.entity-kind {
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.35px;
+.entity-icon {
+  display: inline-flex;
+  align-items: center;
   color: var(--muted);
   flex: none;
+}
+.entity-icon svg {
+  width: 14px;
+  height: 14px;
 }
 .entity-label {
   max-width: 170px;
@@ -2307,9 +2310,6 @@ body.dark {
   font-size: 13px;
   min-height: 32px;
   padding: 3px 7px;
-}
-.entity-kind {
-  font-size: 10px;
 }
 .entity-label {
   max-width: 210px;

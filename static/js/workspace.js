@@ -97,6 +97,11 @@ const paths = {
   plus: "M12 5v14M5 12h14",
   search: "M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm6-2 6 6",
   lock: "M6 10h12v11H6V10ZM8 10V6a4 4 0 0 1 8 0v4M12 14v3",
+  monitor: "M3 4h18v12H3V4ZM8 21h8M12 16v5",
+  server: "M4 3h16v7H4V3ZM4 14h16v7H4v-7ZM7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6",
+  building: "M5 21V3h14v18M3 21h18M9 7h1M14 7h1M9 11h1M14 11h1M10 21v-6h4v6",
+  archive: "M3 3h18v5H3V3ZM5 8v13h14V8M9 12h6",
+  alert: "m12 3 10 18H2L12 3ZM12 9v5M12 17h.01",
 };
 function icons(root = document) {
   $$("[data-icon]", root).forEach((el) => {
@@ -596,6 +601,14 @@ const entityTypeLabels = {
   snapshot: "Snapshot",
   alert: "Alert",
 };
+const entityTypeIcons = {
+  agent: "monitor",
+  device: "server",
+  client: "building",
+  backup: "archive",
+  snapshot: "layers",
+  alert: "alert",
+};
 function humanText(value) {
   return String(value ?? "")
     .replaceAll("_", " ")
@@ -641,6 +654,7 @@ function hideEntity({ restoreFocus = false } = {}) {
   const anchor = activeEntity.anchor;
   anchor?.setAttribute("aria-expanded", "false");
   activeEntity = null;
+  entityPanel.getAnimations().forEach((animation) => animation.cancel());
   if (
     typeof entityPanel.hidePopover === "function" &&
     entityPanel.matches(":popover-open")
@@ -664,11 +678,14 @@ function positionEntity() {
   const height = Math.min(entityPanel.offsetHeight || 280, viewportHeight - 24);
   entityPanel.style.maxHeight = `${viewportHeight - 24}px`;
   entityPanel.style.left = `${Math.max(12, Math.min(rect.left, viewportWidth - entityPanel.offsetWidth - 12))}px`;
-  entityPanel.style.top = `${Math.max(12, rect.bottom + height + 9 < viewportHeight ? rect.bottom + 8 : rect.top - height - 8)}px`;
+  const below = rect.bottom + height + 9 < viewportHeight;
+  entityPanel.dataset.side = below ? "below" : "above";
+  entityPanel.style.top = `${Math.max(12, below ? rect.bottom + 8 : rect.top - height - 8)}px`;
 }
 function showEntity(entity, anchor, pinned = false) {
   clearTimeout(entityHideTimer);
   if (activeEntity?.pinned && !pinned) return;
+  const entering = activeEntity?.anchor !== anchor;
   activeEntity?.anchor?.setAttribute("aria-expanded", "false");
   activeEntity = {
     entity,
@@ -746,6 +763,19 @@ function showEntity(entity, anchor, pinned = false) {
     entityPanel.showPopover();
   anchor.setAttribute("aria-expanded", "true");
   positionEntity();
+  if (entering) {
+    entityPanel.getAnimations().forEach((animation) => animation.cancel());
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const offset = entityPanel.dataset.side === "below" ? -4 : 4;
+      entityPanel.animate(
+        [
+          { opacity: 0, transform: `translateY(${offset}px)` },
+          { opacity: 1, transform: "translateY(0)" },
+        ],
+        { duration: 160, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      );
+    }
+  }
   if (pinned) entityPanel.focus({ preventScroll: true });
 }
 function createEntityChip(entity) {
@@ -759,10 +789,11 @@ function createEntityChip(entity) {
     "aria-label",
     `${entityTypeLabels[entity.type]} ${entity.label}. Show details.`,
   );
-  button.append(
-    node("span", "entity-kind", entityTypeLabels[entity.type]),
-    node("span", "entity-label", entity.label),
-  );
+  const icon = node("span", "entity-icon");
+  icon.dataset.icon = entityTypeIcons[entity.type] || "layers";
+  icon.setAttribute("aria-hidden", "true");
+  button.append(icon, node("span", "entity-label", entity.label));
+  icons(button);
   if (entity.status) {
     const dot = node("span", `entity-dot ${entityTone(entity)}`);
     dot.setAttribute("aria-hidden", "true");
