@@ -340,7 +340,7 @@ class Toolbox:
             result = {"matches": result, "limit": 30}
         result = redact(result)
         encoded = json.dumps(result, ensure_ascii=False)
-        if len(encoded) > 45000:
+        if len(encoded) > 45000 and name != "network_diagram":
             result = {
                 "truncated": True,
                 "warning": "Result exceeds context limit. Only an excerpt follows; do not compute complete totals.",
@@ -594,11 +594,25 @@ def run_chat(
                     "status": "error",
                     "error": result["error"],
                 }
+            model_result = result
+            if call["name"] == "network_diagram" and "data" in result:
+                graph = result["data"]
+                model_result = {**result, "data": {
+                    **{k: v for k, v in graph.items() if k != "hosts"},
+                    "diagram_sheets_displayed": len(toolbox.diagrams),
+                    "hosts": [{
+                        **{k: v for k, v in host.items() if k != "guests"},
+                        "workloads": len(host["guests"]),
+                        "configured_protection_matches": sum(bool(g.get("device_id")) for g in host["guests"]),
+                        "protection_not_established": sum(not g.get("device_id") for g in host["guests"]),
+                    } for host in graph["hosts"]],
+                    "presentation": "All returned workloads are already drawn in SVG sheets. Full per-workload records remain in the evidence panel. Do not generate another diagram or repeat its markup.",
+                }}
             items.append(
                 {
                     "type": "function_call_output",
                     "call_id": call["call_id"],
-                    "output": json.dumps(result),
+                    "output": json.dumps(model_result),
                 }
             )
     raise SourceError(

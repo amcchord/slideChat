@@ -43,6 +43,8 @@ def network_data(fleet, connectors, client_id):
         except SourceError as exc:
             warnings.append(c["name"] + ": " + str(exc))
             continue
+        if data.get("visibility") == "site_matched_guests_and_parent_hosts":
+            warnings.append(c["name"] + ": topology includes only guests matched to this Speck site and their parent hosts. Unassigned or unmatched guests are outside this view.")
         if not data.get("enabled"):
             warnings.append(c["name"] + ": this token has no Proxmox topology grants. Create a token with the relevant Proxmox connections in Speck Settings.")
         if data.get("unavailable_connections"):

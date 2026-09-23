@@ -345,7 +345,10 @@ def connector_data(connector, category="inventory"):
                         or not all(isinstance(row.get(k), str) for k in ("id", "name", "node"))
                         or not isinstance(row.get("identity", {}), dict)
                         or not isinstance(row.get("endpoint", {}), dict)
-                        or not isinstance(row.get("identity", {}).get("macs", []), list)):
+                        or not isinstance(row.get("identity", {}).get("uuid", ""), str)
+                        or not isinstance(row.get("identity", {}).get("macs", []), list)
+                        or any(not isinstance(v, str) for v in row.get("identity", {}).get("macs", []))
+                        or row.get("endpoint", {}).get("slide_agent_id") is not None and not isinstance(row["endpoint"]["slide_agent_id"], str)) :
                         raise SourceError("Unexpected Speck topology resource.")
             return result
         if category not in ("inventory", "alerts"):
