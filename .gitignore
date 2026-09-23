@@ -170,4 +170,6 @@ celerybeat.pid
 dmypy.json
 
 # Pyre type checker
-.pyre/ 
+.pyre/
+# Frontend test dependencies
+node_modules/
