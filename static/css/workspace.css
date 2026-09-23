@@ -364,11 +364,11 @@ h3 {
 }
 .scope-bar select {
   border: 0;
-  background: transparent;
+  background-color: transparent;
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
-  margin: 5px 0 0 -4px;
+  margin: 5px 0 0;
   max-width: 230px;
 }
 .text-button {
@@ -966,6 +966,45 @@ select {
   margin-top: 6px;
   font-size: 12px;
   font-weight: 400;
+}
+/* Keep Safari's native picker behavior with consistent closed-control styling. */
+select:not([multiple]):not([size]),
+select[size="1"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  padding-inline: 11px 36px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23667085' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 16px 16px;
+  cursor: pointer;
+}
+body.dark select:not([multiple]):not([size]),
+body.dark select[size="1"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23a8b1c2' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+select:disabled {
+  opacity: 1;
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  cursor: default;
+}
+select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]),
+  select[size="1"],
+  body.dark select:not([multiple]):not([size]),
+  body.dark select[size="1"] {
+    -webkit-appearance: auto;
+    appearance: auto;
+    background-image: none;
+  }
 }
 input[type="file"] {
   font-size: 11px;
@@ -2496,7 +2535,7 @@ dialog select {
   }
   .scope-bar select {
     width: 170px;
-    font-size: 15px;
+    font-size: 16px;
   }
   .scope-bar .text-button {
     min-width: 44px;
