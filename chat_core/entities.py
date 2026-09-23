@@ -68,6 +68,16 @@ def collect(evidence):
     if name == "slide_inventory":
         for kind in ("client", "device", "agent"):
             rows.extend((kind, r) for r in data.get(kind + "s", []))
+    elif name == "network_diagram":
+        rows = [("client", row) for row in data.get("clients", [])]
+        rows.extend(("device", row) for row in data.get("appliances", []))
+        seen = set()
+        for host in data.get("hosts", []):
+            for guest in host.get("guests", []):
+                if guest.get("agent_id") and guest["agent_id"] not in seen:
+                    seen.add(guest["agent_id"])
+                    rows.append(("agent", {"agent_id": guest["agent_id"], "display_name": guest["name"],
+                                           "client_id": guest.get("client_id"), "device_id": guest.get("device_id")}))
     elif name == "slide_agent":
         rows = [("agent", data.get("agent", {}))]
     elif name in ("slide_activity", "slide_device_alerts"):

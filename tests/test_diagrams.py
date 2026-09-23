@@ -99,3 +99,4 @@ class DiagramTests(unittest.TestCase):
         self.assertIn('```svg', final['content'])
         self.assertIn('Clinic A', final['content'])
         self.assertEqual(final['evidence'][0]['tool'], 'network_diagram')
+        self.assertTrue({'client:c1', 'device:d1', 'agent:a1'} <= {e['ref'] for e in final['entities']})
